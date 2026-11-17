@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from factory import SPECKIT_VERSION, ci, preview, review, screenshots, tasks
+from factory import ci, preview, review, screenshots, tasks
 from factory.checks import git
 from factory.checks.rules import (
     commit_size_violation,
@@ -40,8 +40,6 @@ def cmd_init(args: argparse.Namespace) -> int:
     try:
         report = init_product(
             Path(args.path),
-            name=args.name,
-            speckit=not args.skip_speckit,
             factory_repo=args.factory_repo or os.environ.get("FACTORY_REPO"),
         )
     except InitError as exc:
@@ -52,10 +50,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             print(f"{label:8} {item}")
     for item in report.kept:
         print(f"kept     {item}")
-    print(
-        "\nNext: set commands in .factory/factory.yaml, fill in the product principles with "
-        "/speckit-constitution, then run: factory validate"
-    )
+    print("\nNext: open Claude Code in this directory and run /factory-setup")
     return 0
 
 
@@ -217,10 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="make a repository a factory product")
     p_init.add_argument("path", nargs="?", default=".")
-    p_init.add_argument("--name", help="product name (default: folder name)")
-    p_init.add_argument(
-        "--skip-speckit", action="store_true", help=f"do not run specify init ({SPECKIT_VERSION})"
-    )
+
     p_init.add_argument(
         "--factory-repo", help="owner/repo of the software factory, for the CI workflow"
     )

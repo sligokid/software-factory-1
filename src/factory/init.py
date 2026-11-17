@@ -43,14 +43,16 @@ def _speckit_version() -> str | None:
 def run_speckit_init(root: Path) -> None:
     version = _speckit_version()
     if version is None:
-        raise InitError(
-            "Spec Kit CLI not found. Install it with: "
-            f"uv tool install specify-cli=={SPECKIT_VERSION}"
+        print(f"Installing Spec Kit {SPECKIT_VERSION}...")
+        subprocess.run(
+            ["uv", "tool", "install", f"specify-cli=={SPECKIT_VERSION}"],
+            check=True,
         )
-    if version != SPECKIT_VERSION:
-        raise InitError(
-            f"Spec Kit {version} found, factory requires {SPECKIT_VERSION}: "
-            f"uv tool install --force specify-cli=={SPECKIT_VERSION}"
+    elif version != SPECKIT_VERSION:
+        print(f"Upgrading Spec Kit {version} → {SPECKIT_VERSION}...")
+        subprocess.run(
+            ["uv", "tool", "install", "--force", f"specify-cli=={SPECKIT_VERSION}"],
+            check=True,
         )
     subprocess.run(
         ["specify", "init", "--here", "--force", "--non-interactive", "--integration", "claude"],
@@ -130,16 +132,13 @@ def _ci_workflow(factory_repo: str | None) -> str:
     return "".join(lines)
 
 
-def init_product(
-    root: Path, *, name: str | None = None, speckit: bool = True, factory_repo: str | None = None
-) -> InitReport:
+def init_product(root: Path, *, factory_repo: str | None = None) -> InitReport:
     root = root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     report = InitReport()
-    if speckit:
-        run_speckit_init(root)
+    run_speckit_init(root)
     kit = _kit()
-    _install_constitution(root, name or root.name, report)
+    _install_constitution(root, root.name, report)
     _install_skills(root, report)
     _write_if_missing(root, CONTRACT_PATH, kit.joinpath("factory.yaml").read_text(), report)
     _write_if_missing(root, Path("CLAUDE.md"), kit.joinpath("CLAUDE.md").read_text(), report)

@@ -33,10 +33,13 @@ def test_kit_workflow_calls_the_reusable_workflow() -> None:
     assert data[True]["pull_request"]["types"] == ["ready_for_review", "closed"]  # `on:` key
 
 
-def test_init_installs_ci_workflow(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    init_product(tmp_path / "a", speckit=False, factory_repo="acme/software-factory")
+def test_init_installs_ci_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("factory.init.run_speckit_init", lambda _: None)
+    init_product(tmp_path / "a", factory_repo="acme/software-factory")
     text = (tmp_path / "a" / CI_WORKFLOW).read_text()
     assert "uses: acme/software-factory/.github/workflows/product.yml@v1\n" in text
-    init_product(tmp_path / "b", speckit=False)
+    init_product(tmp_path / "b")
     assert main(["validate", "--root", str(tmp_path / "b")]) == 0
     assert f"{CI_WORKFLOW}: set the factory repository" in capsys.readouterr().out
