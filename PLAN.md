@@ -6,6 +6,8 @@ A developer turns a Linear issue into a Spec Kit spec and task list in one inter
 
 ## Workflow
 
+The factory's unit of work is one **phase** of `tasks.md` (Spec Kit groups tasks into phases). Each phase is implemented in one run and lands as one commit under the size limit. "Task" below means a phase.
+
 ```
 1. DEVELOPER (Claude Code, interactive)
 ───────────────────────────────────────
