@@ -155,43 +155,45 @@ The factory is stateless. Issue state comes from Linear, progress from the check
 
 ## Stages
 
-### Stage 1: Factory core and developer kit
-- Repo layout: a `factory` Python package (CLI, contract, checks, developer kit); later stages add `runner/`, `.github/workflows/`, `dispatcher` and `reviewer` modules.
-- `factory.yaml` JSON schema and a validator (`factory validate`).
-- Generic checks driven by `factory.yaml`: commit size, file size limits, protected paths.
-- Developer kit: `factory init` (runs `specify init`, installs the `factory-*` skills, writes a starter `factory.yaml`, constitution base and `CLAUDE.md`); `/factory-start`, `/factory-handoff`, `/factory-replan` using the contract's commands.
-- Constitution base: workflow, agent boundaries and quality gates shared by every product. Products add their own principles.
-- No product code in this repo. Products are created later with `factory init`.
+### Stage 1: Factory core and developer kit ✅
+- [x] Repo layout: a `factory` Python package (CLI, contract, checks, developer kit); later stages add `runner/`, `.github/workflows/`, `dispatcher` and `reviewer` modules.
+- [x] `factory.yaml` JSON schema and a validator (`factory validate`).
+- [x] Generic checks driven by `factory.yaml`: commit size, file size limits, protected paths.
+- [x] Developer kit: `factory init` (runs `specify init`, installs the `factory-*` skills, writes a starter `factory.yaml`, constitution base and `CLAUDE.md`); `/factory-start`, `/factory-handoff`, `/factory-replan` using the contract's commands.
+- [x] Constitution base: workflow, agent boundaries and quality gates shared by every product. Products add their own principles.
+- [x] No product code in this repo. Products are created later with `factory init`.
 
 **Done when:** `factory init` turns an empty folder into a valid product skeleton that passes `factory validate`, and the factory's own tests pass.
 
-### Stage 2: Runner images and sandbox
-- `runner-base` (Claude Code, Spec Kit, git, gh) plus `runner-python` and `runner-node` layered on it.
-- Non-root, no capabilities, no Docker socket, no host mounts, read-only root, CPU, memory and process limits.
-- Egress: Anthropic API and GitHub, plus the product's `egress` list.
-- Entrypoint refuses `ANTHROPIC_API_KEY`, requires `CLAUDE_CODE_OAUTH_TOKEN`, runs `setup`, then the mode: implement a phase, converge, fix, rework.
-- Tool allowlist: git plus the product's `setup`, `verify` and `checks` commands and Spec Kit scripts.
-- Transcript saved per run; `factory agent` and `factory replay` for local runs.
+### Stage 2: Runner images and sandbox ✅
+- [x] `runner-base` (Claude Code, Spec Kit, git, gh) plus `runner-python` and `runner-node` layered on it.
+- [x] Non-root, no capabilities, no Docker socket, no host mounts, read-only root, CPU, memory and process limits.
+- [x] Egress: Anthropic API and GitHub, plus the product's `egress` list.
+- [x] Entrypoint refuses `ANTHROPIC_API_KEY`, requires `CLAUDE_CODE_OAUTH_TOKEN`, runs `setup`, then the mode: implement a phase, converge, fix, rework.
+- [x] Tool allowlist: git plus the product's `setup`, `verify` and `checks` commands and Spec Kit scripts.
+- [x] Transcript saved per run; `factory agent` and `factory replay` for local runs.
 
 **Done when:** a manual run against a test product implements one phase as one commit, other hosts are unreachable, and an API key stops the container.
 
-### Stage 3: CI, reviewer and preview
-- Reusable workflow (`uses: <org>/software-factory/.github/workflows/product.yml@v1`) that reads `factory.yaml` and runs `setup`, `verify`, `checks`, the generic checks, SAST, secret scan and dependency scan.
-- Read-only reviewer agent against the product's constitution, per commit and on the finished PR; Playwright screenshots when `preview.ui` is true.
-- Preview: the product's `compose.preview.yaml` started per feature PR, exposed through ngrok, health-checked, redeployed on push, removed on merge or close.
+### Stage 3: CI, reviewer and preview ✅
+- [x] Reusable workflow (`uses: <org>/software-factory/.github/workflows/product.yml@v1`) that reads `factory.yaml` and runs `setup`, `verify`, `checks`, the generic checks, SAST, secret scan and dependency scan.
+- [x] Read-only reviewer agent against the product's constitution, per commit and on the finished PR; Playwright screenshots when `preview.ui` is true.
+- [x] Preview: the product's `compose.preview.yaml` started per feature PR, exposed through ngrok, health-checked, redeployed on push, removed on merge or close.
 
 **Done when:** each check fails on a bad commit and passes on a clean one in a test product, and its preview shows the latest commit.
 
+**Untested:** a real Claude agent run (stage 2 was verified with a stand-in `claude`); the workflows on GitHub (no remote yet); the public ngrok preview and its traffic policy (needs a reserved domain and `NGROK_AUTHTOKEN`; only the local preview has run).
+
 ### Stage 4: Dispatcher and Linear integration
-- Triggers: Linear webhook (or 30-second polling) for Ready for agent, mapping each Linear team or project to a product repo; and the `factory:ready` PR label for document-mode features. GitHub events for reviews, comments, close and labels.
-- Phase loop, fixes, converge, rework and replan with their limits; runner chosen from `factory.yaml`.
-- New container and repo-scoped GitHub App token per run; turn limit and wall-clock timeout.
-- Status: PR labels and comments always; Linear state changes and comments only when `source.yaml` says `linear`. OTel metrics.
+- [ ] Triggers: Linear webhook (or 30-second polling) for Ready for agent, mapping each Linear team or project to a product repo; and the `factory:ready` PR label for document-mode features. GitHub events for reviews, comments, close and labels.
+- [ ] Phase loop, fixes, converge, rework and replan with their limits; runner chosen from `factory.yaml`.
+- [ ] New container and repo-scoped GitHub App token per run; turn limit and wall-clock timeout.
+- [ ] Status: PR labels and comments always; Linear state changes and comments only when `source.yaml` says `linear`. OTel metrics.
 
 **Done when:** a two-phase issue in a test product ends as one ready PR with correct Linear states and comments; a forced timeout lands in Agent failed; closing the PR lands in Needs replan.
 
 ### Stage 5: Pilot products
-- Pilot products and their specifics (stack, constitution, preview stack) are defined later, outside this repo.
+- [ ] Pilot products and their specifics (stack, constitution, preview stack) are defined later, outside this repo.
 
 **Done when:** a pilot feature reaches `main` through one Claude Code session and one PR, with no human step after handover other than review and merge.
 
