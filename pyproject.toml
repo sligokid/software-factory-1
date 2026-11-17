@@ -1,6 +1,6 @@
 [project]
 name = "software-factory"
-version = "0.1.0"
+version = "0.2.0"
 description = "Product-agnostic AI software factory: contract, checks, developer kit, runner and dispatcher"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,6 +10,8 @@ dependencies = [
 
 [project.scripts]
 factory = "factory.cli:main"
+factory-runner = "factory.runner.entrypoint:main"
+factory-egress = "factory.runner.proxy:main"
 
 [dependency-groups]
 dev = [

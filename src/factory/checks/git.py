@@ -35,3 +35,12 @@ def changes(repo: Path, base: str, head: str = "HEAD") -> list[FileChange]:
             )
         )
     return result
+
+
+def current_branch(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()

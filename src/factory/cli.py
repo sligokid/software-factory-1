@@ -13,6 +13,7 @@ from factory.checks.rules import (
 )
 from factory.contract import CONTRACT_PATH, ContractError, load
 from factory.init import CONSTITUTION, InitError, init_product
+from factory.runner import Mode, host, sandbox
 
 PLACEHOLDER = "FACTORY:"
 
@@ -83,6 +84,30 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def cmd_agent(args: argparse.Namespace) -> int:
+    branch = args.branch or git.current_branch(Path(args.product))
+    feedback = Path(args.feedback_file).read_text() if args.feedback_file else ""
+    req = host.RunRequest(
+        product=Path(args.product),
+        branch=branch,
+        mode=Mode(args.mode),
+        phase=args.phase,
+        feedback=feedback,
+        max_turns=args.max_turns,
+        model=args.model,
+        timeout=args.timeout,
+        limits=sandbox.Limits(cpus=args.cpus, memory=args.memory, pids=args.pids),
+        image=args.image,
+        apply=not args.no_apply,
+    )
+    return host.agent(req, Path(args.out) if args.out else None)
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    product = Path(args.product) if args.product else None
+    return host.replay(Path(args.run), product, Path(args.out) if args.out else None)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="factory", description="AI software factory")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -105,6 +130,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_chk.add_argument("--head", default="HEAD")
     p_chk.add_argument("--agent", action="store_true", help="also enforce protected paths")
     p_chk.set_defaults(func=cmd_check)
+
+    p_agent = sub.add_parser("agent", help="run one sandboxed agent run locally (needs Docker)")
+    p_agent.add_argument("mode", choices=[m.value for m in Mode])
+    p_agent.add_argument("--product", default=".", help="local product checkout")
+    p_agent.add_argument("--branch", help="feature/<ID> (default: current branch)")
+    p_agent.add_argument("--phase", type=int, help="phase number (default: next open phase)")
+    p_agent.add_argument("--feedback-file", help="failure report or review comments (fix, rework)")
+    p_agent.add_argument("--max-turns", type=int, default=100)
+    p_agent.add_argument("--model")
+    p_agent.add_argument("--timeout", type=int, default=3600, help="wall clock seconds")
+    p_agent.add_argument("--cpus", default=sandbox.Limits.cpus)
+    p_agent.add_argument("--memory", default=sandbox.Limits.memory)
+    p_agent.add_argument("--pids", type=int, default=sandbox.Limits.pids)
+    p_agent.add_argument("--image", help="runner image (default: from factory.yaml runner)")
+    p_agent.add_argument("--out", help=f"run folder (default: ${host.RUNS_DIR_ENV}/<run id>)")
+    p_agent.add_argument("--no-apply", action="store_true", help="do not move the branch")
+    p_agent.set_defaults(func=cmd_agent)
+
+    p_replay = sub.add_parser("replay", help="re-run a recorded run from the same commit")
+    p_replay.add_argument("run", help="run folder containing run.json")
+    p_replay.add_argument("--product", help="local product checkout (default: as recorded)")
+    p_replay.add_argument("--out", help="run folder for the replay")
+    p_replay.set_defaults(func=cmd_replay)
     return parser
 
 
