@@ -13,6 +13,7 @@ class Mode(StrEnum):
     REWORK = "rework"  # address PR review comments as one new commit
 
 
+AGENT_GIT_NAME = "factory-agent"  # author of agent commits; CI enforces protected paths on them
 INPUT_REF = "refs/factory/input"  # the ref carrying the start commit into the container
 IMAGE_PREFIX_ENV = "FACTORY_IMAGE_PREFIX"
 DEFAULT_IMAGE_PREFIX = "software-factory/runner"

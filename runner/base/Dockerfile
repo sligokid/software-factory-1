@@ -1,9 +1,13 @@
-# runner-base: Claude Code, Spec Kit, git, gh and the factory runner (entrypoint + egress proxy).
+# runner-base: Claude Code, Spec Kit, git, gh, the factory CLI (runner entrypoint, egress proxy,
+# `factory ci`) and the CI scanners: gitleaks, semgrep, osv-scanner.
 # Build from the repo root with `make images` (versions come from src/factory/__init__.py).
 FROM debian:bookworm-slim
 
 ARG CLAUDE_CODE_VERSION
 ARG SPECKIT_VERSION
+ARG GITLEAKS_VERSION
+ARG OSV_SCANNER_VERSION
+ARG SEMGREP_VERSION
 ARG UV_VERSION=0.13.9
 
 RUN apt-get update \
@@ -16,6 +20,18 @@ RUN curl -fsSL "https://astral.sh/uv/${UV_VERSION}/install.sh" \
       | env UV_INSTALL_DIR=/usr/local/bin INSTALLER_NO_MODIFY_PATH=1 sh \
  && UV_TOOL_DIR=/opt/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
       uv tool install --python 3.12 "specify-cli==${SPECKIT_VERSION}" \
+ && rm -rf /root/.cache
+
+# CI scanners (language-agnostic): secrets, SAST, dependency vulnerabilities.
+RUN arch="$(dpkg --print-architecture)" \
+ && gl_arch="$([ "$arch" = amd64 ] && echo x64 || echo "$arch")" \
+ && curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${gl_arch}.tar.gz" \
+      | tar -xz -C /usr/local/bin gitleaks \
+ && curl -fsSL -o /usr/local/bin/osv-scanner \
+      "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_${arch}" \
+ && chmod 0755 /usr/local/bin/osv-scanner \
+ && UV_TOOL_DIR=/opt/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
+      uv tool install --python 3.12 "semgrep==${SEMGREP_VERSION}" \
  && rm -rf /root/.cache
 
 COPY pyproject.toml uv.lock README.md /tmp/factory/

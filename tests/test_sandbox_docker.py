@@ -3,7 +3,6 @@
 Run with `make docker-test` (sets FACTORY_DOCKER_TESTS=1); skipped otherwise.
 """
 
-import os
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -12,9 +11,7 @@ import pytest
 
 from factory.runner import Mode, host, image, sandbox
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("FACTORY_DOCKER_TESTS") != "1", reason="set FACTORY_DOCKER_TESTS=1"
-)
+pytestmark = pytest.mark.docker
 IMAGE = image("base")
 
 

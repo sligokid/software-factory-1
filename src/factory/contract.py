@@ -36,6 +36,7 @@ class Preview:
     port: int
     healthcheck: str = "/"
     ui: bool = False
+    screenshots: list[str] = field(default_factory=lambda: ["/"])
 
 
 @dataclass(frozen=True)

@@ -12,8 +12,12 @@ products. It must never contain product-specific code, stacks or rules. See `PLA
 - `src/factory/runner/`: sandboxed runs. `entrypoint.py` (in the container), `proxy.py` (egress
   allowlist), `tools.py` (agent tool allowlist), `sandbox.py` (docker flags), `host.py`
   (`factory agent`, `factory replay`). Images: `runner/{base,python,node}/Dockerfile`.
-- `src/factory/cli.py`: the `factory` command (`init`, `validate`, `check`, `agent`, `replay`).
-- Later stages add reusable CI workflows, reviewer and dispatcher.
+- `src/factory/ci.py`, `review.py`, `screenshots.py`, `preview.py`: `factory ci`, the read-only
+  reviewer, Playwright screenshots and per-feature previews. `.github/workflows/product.yml` is
+  the reusable workflow products call (kit: `factory-ci.yml`); `images.yml` publishes images.
+- `src/factory/cli.py`: the `factory` command (`init`, `validate`, `check`, `agent`, `replay`,
+  `ci`, `review`, `screenshots`, `preview`).
+- Stage 4 adds the dispatcher.
 
 ## Commands
 - `make all`: ruff, mypy (strict), pytest. Must pass before every commit.
@@ -24,4 +28,5 @@ products. It must never contain product-specific code, stacks or rules. See `PLA
 - Anything a product decides (language, framework, commands, preview, limits) comes from the
   product's `factory.yaml`, never from code here.
 - Kit files are copied into products: keep them generic and short.
-- Pin tools in one place: `SPECKIT_VERSION` and `CLAUDE_CODE_VERSION` in `src/factory/__init__.py`.
+- Pin tools in one place: the versions in `src/factory/__init__.py`. Bump the package version
+  together with `FACTORY_VERSION` in `.github/workflows/product.yml` (a test checks they match).

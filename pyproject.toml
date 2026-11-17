@@ -1,12 +1,15 @@
 [project]
 name = "software-factory"
-version = "0.2.0"
+version = "0.3.0"
 description = "Product-agnostic AI software factory: contract, checks, developer kit, runner and dispatcher"
 requires-python = ">=3.12"
 dependencies = [
     "jsonschema>=4.23",
     "pyyaml>=6.0",
 ]
+
+[project.optional-dependencies]
+ui = ["playwright>=1.50"]  # factory screenshots (installed in the reviewer image)
 
 [project.scripts]
 factory = "factory.cli:main"
@@ -16,6 +19,7 @@ factory-egress = "factory.runner.proxy:main"
 [dependency-groups]
 dev = [
     "mypy>=1.11",
+    "playwright>=1.50",
     "pytest>=8.3",
     "ruff>=0.6",
     "types-jsonschema",
@@ -47,3 +51,4 @@ packages = ["factory"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["docker: needs Docker and the runner images (make images); run with make docker-test"]

@@ -1,0 +1,225 @@
+# Reusable workflow every factory product calls from .github/workflows/factory.yml:
+#
+#   uses: <owner>/software-factory/.github/workflows/product.yml@v1
+#
+# push (main, feature/**)      checks: setup, verify, checks, factory checks, secrets, SAST, deps
+# push (feature/**)            reviewer on the pushed commits; preview redeploy
+# pull_request ready_for_review  reviewer on the whole PR
+# pull_request closed          preview removed
+#
+# Repository or organisation settings:
+#   secrets  CLAUDE_CODE_OAUTH_TOKEN   reviewer (skipped with a notice when missing)
+#            FACTORY_PREVIEW_AUTH      user:password for previews (and screenshots)
+#            NGROK_AUTHTOKEN           preview tunnel (preview runner only)
+#   vars     FACTORY_IMAGE_PREFIX      default ghcr.io/<owner>/software-factory/runner
+#            FACTORY_PREVIEW_DOMAIN    wildcard preview domain: <feature-id>.<domain>
+#            FACTORY_PREVIEW_ALLOW_IPS optional CIDR allowlist instead of basic auth
+#            FACTORY_PREVIEW_RUNNER    label of the self-hosted runner on the factory host;
+#                                      previews are off when unset
+name: factory
+
+on:
+  workflow_call:
+    inputs:
+      image-prefix:
+        description: Runner image prefix (overrides vars.FACTORY_IMAGE_PREFIX)
+        type: string
+        default: ""
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+      FACTORY_PREVIEW_AUTH:
+        required: false
+      NGROK_AUTHTOKEN:
+        required: false
+
+env:
+  FACTORY_VERSION: "0.3.0" # runner image tag: always the factory package version
+
+jobs:
+  context:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      image: ${{ steps.ctx.outputs.image }}
+      reviewer: ${{ steps.ctx.outputs.reviewer }}
+      base: ${{ steps.ctx.outputs.base }}
+      head: ${{ steps.ctx.outputs.head }}
+      branch: ${{ steps.ctx.outputs.branch }}
+      preview: ${{ steps.ctx.outputs.preview }}
+      ui: ${{ steps.ctx.outputs.ui }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - id: ctx
+        shell: bash
+        env:
+          PREFIX: ${{ inputs.image-prefix || vars.FACTORY_IMAGE_PREFIX }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          prefix="${PREFIX:-ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/software-factory/runner}"
+          runner="$(yq '.runner' .factory/factory.yaml)"
+          if [ "$EVENT" = pull_request ]; then
+            base="$PR_BASE" head="$PR_HEAD" branch="$HEAD_REF"
+          else
+            head="$GITHUB_SHA" branch="$GITHUB_REF_NAME" base="$BEFORE"
+            if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ]; then
+              base="$(git merge-base "$head" "origin/$DEFAULT_BRANCH" 2>/dev/null || true)"
+            fi
+          fi
+          {
+            echo "image=${prefix}-${runner}:${FACTORY_VERSION}"
+            echo "reviewer=${prefix}-reviewer:${FACTORY_VERSION}"
+            echo "base=${base}"
+            echo "head=${head}"
+            echo "branch=${branch}"
+            echo "preview=$(yq '.preview != null' .factory/factory.yaml)"
+            echo "ui=$(yq '.preview.ui // false' .factory/factory.yaml)"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  checks:
+    needs: context
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.context.outputs.image }}
+      options: --user root
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      BASE: ${{ needs.context.outputs.base }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: factory validate
+      - id: setup
+        run: factory ci setup
+      - name: verify
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: factory ci verify
+      - name: checks
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: factory ci checks
+      - name: factory checks (sizes, commit size, agent protected paths)
+        if: ${{ !cancelled() }}
+        run: factory ci factory --base "$BASE"
+      - name: secret scan
+        if: ${{ !cancelled() }}
+        run: factory ci secrets --base "$BASE"
+      - name: SAST
+        if: ${{ !cancelled() }}
+        run: factory ci sast --base "$BASE"
+      - name: dependency scan
+        if: ${{ !cancelled() }}
+        run: factory ci deps
+
+  review:
+    needs: [context, checks]
+    if: >-
+      ${{ !cancelled() && needs.context.result == 'success'
+      && (needs.checks.result == 'success' || needs.checks.result == 'skipped')
+      && ((github.event_name == 'push' && startsWith(github.ref_name, 'feature/'))
+          || github.event.action == 'ready_for_review') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: write
+    container:
+      image: ${{ needs.context.outputs.reviewer }}
+      options: --user root --ipc=host
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      BASE: ${{ needs.context.outputs.base }}
+      HEAD: ${{ needs.context.outputs.head }}
+      BRANCH: ${{ needs.context.outputs.branch }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      FACTORY_PREVIEW_DOMAIN: ${{ vars.FACTORY_PREVIEW_DOMAIN }}
+      FACTORY_PREVIEW_AUTH: ${{ secrets.FACTORY_PREVIEW_AUTH }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.context.outputs.head }}
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: screenshots of the preview
+        if: needs.context.outputs.ui == 'true' && vars.FACTORY_PREVIEW_DOMAIN != ''
+        continue-on-error: true
+        run: factory screenshots "$(factory preview url --branch "$BRANCH")" --commit "$HEAD" --out "$RUNNER_TEMP/screenshots"
+      - name: review
+        shell: bash
+        run: |
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set: review skipped"
+            exit 0
+          fi
+          shots=()
+          [ -d "$RUNNER_TEMP/screenshots" ] && shots=(--screenshots "$RUNNER_TEMP/screenshots")
+          set +e
+          factory review --base "$BASE" --head "$HEAD" --branch "$BRANCH" "${shots[@]}" \
+            --json "$RUNNER_TEMP/review.json" --markdown "$RUNNER_TEMP/review.md"
+          code=$?
+          set -e
+          if [ -f "$RUNNER_TEMP/review.md" ]; then
+            cat "$RUNNER_TEMP/review.md" >> "$GITHUB_STEP_SUMMARY"
+            pr="${{ github.event.pull_request.number }}"
+            [ -n "$pr" ] || pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json number -q '.[0].number')"
+            [ -z "$pr" ] || gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/review.md"
+          fi
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: factory-review-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/review.json
+            ${{ runner.temp }}/screenshots
+          if-no-files-found: ignore
+
+  preview:
+    needs: context
+    if: >-
+      ${{ vars.FACTORY_PREVIEW_RUNNER != '' && needs.context.outputs.preview == 'true'
+      && startsWith(needs.context.outputs.branch, 'feature/')
+      && (github.event_name == 'push' || github.event.action == 'closed') }}
+    runs-on: ${{ vars.FACTORY_PREVIEW_RUNNER }}
+    permissions:
+      contents: read
+    concurrency:
+      group: factory-preview-${{ needs.context.outputs.branch }}
+      cancel-in-progress: true
+    env:
+      BRANCH: ${{ needs.context.outputs.branch }}
+      FACTORY_PREVIEW_DOMAIN: ${{ vars.FACTORY_PREVIEW_DOMAIN }}
+      FACTORY_PREVIEW_ALLOW_IPS: ${{ vars.FACTORY_PREVIEW_ALLOW_IPS }}
+      FACTORY_PREVIEW_AUTH: ${{ secrets.FACTORY_PREVIEW_AUTH }}
+      NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+    steps:
+      - name: remove preview (PR merged or closed)
+        if: github.event.action == 'closed'
+        run: factory preview down --branch "$BRANCH"
+      - uses: actions/checkout@v4
+        if: github.event.action != 'closed'
+        with:
+          ref: ${{ needs.context.outputs.head }}
+      - name: deploy preview
+        if: github.event.action != 'closed'
+        run: factory preview up --product . --ref HEAD --branch "$BRANCH"

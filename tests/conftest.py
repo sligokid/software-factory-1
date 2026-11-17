@@ -1,7 +1,17 @@
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    if os.environ.get("FACTORY_DOCKER_TESTS") == "1":
+        return
+    skip = pytest.mark.skip(reason="needs Docker and the runner images: make docker-test")
+    for item in items:
+        if "docker" in item.keywords:
+            item.add_marker(skip)
 
 
 def git(repo: Path, *args: str) -> str:

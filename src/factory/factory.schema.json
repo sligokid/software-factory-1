@@ -30,7 +30,13 @@
         "service": {"type": "string", "minLength": 1},
         "port": {"type": "integer", "minimum": 1, "maximum": 65535},
         "healthcheck": {"type": "string", "pattern": "^/"},
-        "ui": {"type": "boolean"}
+        "ui": {"type": "boolean", "description": "Reviewer also takes Playwright screenshots."},
+        "screenshots": {
+          "description": "Paths the reviewer screenshots when ui is true (default: [\"/\"]).",
+          "type": "array",
+          "items": {"type": "string", "pattern": "^/"},
+          "minItems": 1
+        }
       }
     },
     "egress": {

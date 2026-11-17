@@ -13,6 +13,8 @@ from factory import SPECKIT_VERSION
 from factory.contract import CONTRACT_PATH
 
 CONSTITUTION = Path(".specify") / "memory" / "constitution.md"
+CI_WORKFLOW = Path(".github") / "workflows" / "factory.yml"
+FACTORY_REPO_PLACEHOLDER = "OWNER/software-factory"
 SPECKIT_TEMPLATE_MARKER = "[PROJECT_NAME]"
 
 
@@ -116,7 +118,21 @@ def _install_mcp(root: Path, report: InitReport) -> None:
     report.updated.append(rel.as_posix())
 
 
-def init_product(root: Path, *, name: str | None = None, speckit: bool = True) -> InitReport:
+def _ci_workflow(factory_repo: str | None) -> str:
+    text = _kit().joinpath("factory-ci.yml").read_text()
+    if not factory_repo:
+        return text
+    lines = []
+    for line in text.splitlines(keepends=True):
+        if FACTORY_REPO_PLACEHOLDER in line:
+            line = line.replace(FACTORY_REPO_PLACEHOLDER, factory_repo).split(" #")[0] + "\n"
+        lines.append(line)
+    return "".join(lines)
+
+
+def init_product(
+    root: Path, *, name: str | None = None, speckit: bool = True, factory_repo: str | None = None
+) -> InitReport:
     root = root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     report = InitReport()
@@ -133,5 +149,6 @@ def init_product(root: Path, *, name: str | None = None, speckit: bool = True) -
         kit.joinpath("linear-issue-template.md").read_text(),
         report,
     )
+    _write_if_missing(root, CI_WORKFLOW, _ci_workflow(factory_repo), report)
     _install_mcp(root, report)
     return report

@@ -32,6 +32,10 @@ factory validate
 | `factory validate` | Validates `.factory/factory.yaml` against the schema and warns about unfilled placeholders. |
 | `factory check [--base REF] [--agent]` | File size limits; with `--base`, commit size; with `--agent`, protected paths. |
 | `factory agent <mode> [--phase N]` | One sandboxed agent run on the current `feature/<ID>` branch of a local product checkout (modes: `implement`, `fix`, `converge`, `rework`). Lands one commit on the branch and saves the run under `~/.factory/runs/<run id>`. |
+| `factory ci <step...> [--base REF]` | CI steps: `setup`, `verify`, `checks` (the contract's commands), `factory` (sizes, per-commit size, protected paths on agent commits), `secrets` (gitleaks), `sast` (semgrep), `deps` (osv-scanner), or `all`. The scanners are in the runner images. |
+| `factory review --base REF [--screenshots DIR]` | Read-only Claude reviewer against the constitution and the feature spec. Blocking findings fail it; `--markdown` writes the PR comment. |
+| `factory screenshots URL --out DIR [--commit SHA]` | Playwright desktop and mobile screenshots of `preview.screenshots` paths, after the preview serves the commit. |
+| `factory preview up\|down\|status\|url` | Per-feature preview from the product's compose file, on the factory host. |
 | `factory replay <run folder>` | Re-runs a recorded run from the same commit, mode, phase, feedback and image; the result is kept under `refs/factory/runs/` and the branch is not moved. |
 
 ## Runner and sandbox
@@ -56,6 +60,31 @@ factory agent fix --feedback-file ci.txt
 factory replay ~/.factory/runs/<run id>
 ```
 
+## CI, reviewer and preview
+
+`factory init --factory-repo <owner>/software-factory` installs `.github/workflows/factory.yml`,
+which calls this repo's reusable workflow (`.github/workflows/product.yml@v1`):
+
+| Event | Jobs |
+|-------|------|
+| push to `main` or `feature/**` | `checks` in the product's runner image: every `factory ci` step on the pushed commits |
+| push to `feature/**` | `review` of the pushed commits, posted on the PR; `preview` redeploy |
+| PR ready for review | `review` of the whole PR (with screenshots when `preview.ui`) |
+| PR closed or merged | `preview` removed |
+
+Setup: tag a release `v1` (the `images` workflow publishes `ghcr.io/<owner>/<repo>/runner-*`
+and the packages must be readable by product repos); secrets `CLAUDE_CODE_OAUTH_TOKEN`,
+`FACTORY_PREVIEW_AUTH`, `NGROK_AUTHTOKEN`; variables `FACTORY_PREVIEW_DOMAIN`,
+`FACTORY_PREVIEW_RUNNER` (a self-hosted runner on the factory host with Docker and `factory`
+installed; previews are off without it) and optionally `FACTORY_PREVIEW_ALLOW_IPS`.
+
+Previews run the product's `compose.preview.yaml` as project `factory-preview-<id>` with an
+ngrok tunnel at `https://<id>.<FACTORY_PREVIEW_DOMAIN>` (a reserved wildcard domain). They are
+never public: basic auth (`FACTORY_PREVIEW_AUTH`) or an IP allowlist is required, and every
+response carries `x-factory-commit: <sha>`. The stack gets `FACTORY_COMMIT` and
+`FACTORY_PREVIEW_URL` in its environment. Without a domain, `factory preview up` deploys locally
+only.
+
 A run folder holds `run.json` (request, result, usage), `transcript.jsonl` (Claude's
 stream-json), `runner.log` and `egress.log` (allowed and denied hosts).
 
@@ -72,5 +101,5 @@ stream-json), `runner.log` and `egress.log` (allowed and denied hosts).
 ```bash
 make all          # ruff, mypy --strict, pytest
 make images       # runner images
-make docker-test  # sandbox tests against the images (egress, API key refusal, hardening)
+make docker-test  # against the images: sandbox, each CI check bad/clean, preview lifecycle
 ```

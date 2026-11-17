@@ -2,8 +2,7 @@
 IMAGE_PREFIX ?= software-factory/runner
 PY = uv run python -c
 VERSION = $(shell $(PY) 'import factory; print(factory.__version__)')
-CLAUDE_CODE_VERSION = $(shell $(PY) 'import factory; print(factory.CLAUDE_CODE_VERSION)')
-SPECKIT_VERSION = $(shell $(PY) 'import factory; print(factory.SPECKIT_VERSION)')
+PIN = $(shell $(PY) 'import factory; print(factory.$(1))')
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
@@ -27,16 +26,20 @@ test: ## Run tests (Docker sandbox tests are skipped unless FACTORY_DOCKER_TESTS
 
 all: lint typecheck test ## Everything CI runs locally
 
-images: ## Build runner images: runner-base, runner-python, runner-node
+RUNNERS = base python node reviewer
+
+images: ## Build runner images: runner-base, runner-python, runner-node, runner-reviewer
 	docker build -f runner/base/Dockerfile -t $(IMAGE_PREFIX)-base:$(VERSION) \
-	  --build-arg CLAUDE_CODE_VERSION=$(CLAUDE_CODE_VERSION) \
-	  --build-arg SPECKIT_VERSION=$(SPECKIT_VERSION) .
-	docker build -t $(IMAGE_PREFIX)-python:$(VERSION) \
-	  --build-arg BASE=$(IMAGE_PREFIX)-base:$(VERSION) runner/python
-	docker build -t $(IMAGE_PREFIX)-node:$(VERSION) \
-	  --build-arg BASE=$(IMAGE_PREFIX)-base:$(VERSION) runner/node
+	  $(foreach p,CLAUDE_CODE_VERSION SPECKIT_VERSION GITLEAKS_VERSION OSV_SCANNER_VERSION SEMGREP_VERSION,--build-arg $(p)=$(call PIN,$(p))) .
+	for r in python node reviewer; do \
+	  docker build -t $(IMAGE_PREFIX)-$$r:$(VERSION) --build-arg BASE=$(IMAGE_PREFIX)-base:$(VERSION) \
+	    --build-arg PLAYWRIGHT_VERSION=$(call PIN,PLAYWRIGHT_VERSION) runner/$$r || exit 1; \
+	done
 
-docker-test: ## Sandbox tests against the built images (egress, API key refusal, hardening)
-	FACTORY_DOCKER_TESTS=1 uv run pytest tests/test_sandbox_docker.py
+push: ## Push runner images (set IMAGE_PREFIX, e.g. ghcr.io/<owner>/software-factory/runner)
+	for r in $(RUNNERS); do docker push $(IMAGE_PREFIX)-$$r:$(VERSION) || exit 1; done
 
-.PHONY: help install lint format typecheck test all images docker-test
+docker-test: ## Tests against the built images: sandbox, CI scanners, preview
+	FACTORY_DOCKER_TESTS=1 uv run pytest -m docker
+
+.PHONY: help install lint format typecheck test all images push docker-test

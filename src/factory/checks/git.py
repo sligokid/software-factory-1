@@ -44,3 +44,20 @@ def current_branch(repo: Path) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+@dataclass(frozen=True)
+class Commit:
+    sha: str
+    author: str
+    subject: str
+
+
+def commits(repo: Path, base: str, head: str = "HEAD") -> list[Commit]:
+    """Non-merge commits in base..head, oldest first."""
+    out = subprocess.run(
+        ["git", "-C", str(repo), "log", "--reverse", "--no-merges", "--format=%H%x00%an%x00%s",
+         f"{base}..{head}"],
+        check=True, capture_output=True, text=True,
+    ).stdout  # fmt: skip
+    return [Commit(*line.split("\0", 2)) for line in out.splitlines() if line]

@@ -15,7 +15,8 @@ commands:
 #   service: web
 #   port: 3000
 #   healthcheck: /
-#   ui: true
+#   ui: true                  # the reviewer takes screenshots of these paths
+#   screenshots: [/, /settings]
 
 # egress:          # extra hosts agents may reach (package registries, APIs)
 #   - pypi.org

@@ -1,10 +1,12 @@
 """`factory` command-line interface."""
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 
-from factory import SPECKIT_VERSION
+from factory import SPECKIT_VERSION, ci, preview, review, screenshots, tasks
 from factory.checks import git
 from factory.checks.rules import (
     commit_size_violation,
@@ -12,7 +14,7 @@ from factory.checks.rules import (
     protected_path_violations,
 )
 from factory.contract import CONTRACT_PATH, ContractError, load
-from factory.init import CONSTITUTION, InitError, init_product
+from factory.init import CI_WORKFLOW, CONSTITUTION, InitError, init_product
 from factory.runner import Mode, host, sandbox
 
 PLACEHOLDER = "FACTORY:"
@@ -24,6 +26,9 @@ def _warnings(root: Path) -> list[str]:
     for line in contract_text.splitlines():
         if PLACEHOLDER in line and not line.lstrip().startswith("#"):
             warnings.append(f"{CONTRACT_PATH}: placeholder still set: {line.strip()}")
+    workflow = root / CI_WORKFLOW
+    if workflow.exists() and f"# {PLACEHOLDER}" in workflow.read_text():
+        warnings.append(f"{CI_WORKFLOW}: set the factory repository (factory init --factory-repo)")
     for rel in (CONSTITUTION, Path("CLAUDE.md")):
         path = root / rel
         if path.exists() and f"<!-- {PLACEHOLDER}" in path.read_text():
@@ -33,7 +38,12 @@ def _warnings(root: Path) -> list[str]:
 
 def cmd_init(args: argparse.Namespace) -> int:
     try:
-        report = init_product(Path(args.path), name=args.name, speckit=not args.skip_speckit)
+        report = init_product(
+            Path(args.path),
+            name=args.name,
+            speckit=not args.skip_speckit,
+            factory_repo=args.factory_repo or os.environ.get("FACTORY_REPO"),
+        )
     except InitError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -108,6 +118,99 @@ def cmd_replay(args: argparse.Namespace) -> int:
     return host.replay(Path(args.run), product, Path(args.out) if args.out else None)
 
 
+def _branch(args: argparse.Namespace, root: Path) -> str:
+    """--branch, else the branch GitHub Actions is building, else the checked-out branch."""
+    env = os.environ
+    return (
+        args.branch
+        or env.get("GITHUB_HEAD_REF")
+        or env.get("GITHUB_REF_NAME")
+        or (git.current_branch(root))
+    )
+
+
+def cmd_ci(args: argparse.Namespace) -> int:
+    root = Path(args.root)
+    try:
+        contract = load(root)
+    except ContractError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    steps = list(ci.STEPS) if "all" in args.steps else args.steps
+    outcomes = ci.run(steps, root, contract, args.base, args.head)
+    print()
+    for o in outcomes:
+        mark = "skip" if o.skipped else ("ok" if o.ok else "FAIL")
+        print(f"{mark:5} {o.step:8} {o.detail}".rstrip())
+    return 0 if all(o.ok for o in outcomes) else 1
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    root = Path(args.root)
+    try:
+        contract = load(root)
+        feature = tasks.feature_id(_branch(args, root))
+        spec = args.spec or (tasks.find_spec_dir(root, feature) if feature else None)
+        shots = Path(args.screenshots) if args.screenshots else None
+        result = review.review(
+            root, contract, args.base, args.head, spec_dir=spec, screenshots=shots,
+            max_turns=args.max_turns, model=args.model,
+        )  # fmt: skip
+    except (ContractError, review.ReviewError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    text = review.markdown(result)
+    print(text)
+    if args.json:
+        Path(args.json).write_text(json.dumps(result.as_dict(), indent=2) + "\n")
+    if args.markdown:
+        Path(args.markdown).write_text(text)
+    return 0 if result.passed else 1
+
+
+def cmd_screenshots(args: argparse.Namespace) -> int:
+    auth = os.environ.get(preview.AUTH_ENV) or None
+    paths = args.path
+    if not paths:
+        try:
+            contract = load(Path(args.root))
+            paths = contract.preview.screenshots if contract.preview else ["/"]
+        except ContractError:
+            paths = ["/"]
+    try:
+        if args.commit:
+            preview.wait_for_commit(args.url, args.commit, auth, args.timeout)
+        files = screenshots.take(args.url, paths, Path(args.out), auth)
+    except (preview.PreviewError, screenshots.ScreenshotError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    for file in files:
+        print(file)
+    return 0
+
+
+def cmd_preview(args: argparse.Namespace) -> int:
+    root = Path(args.product)
+    try:
+        if args.action == "status":
+            print(json.dumps(preview.status(), indent=2))
+            return 0
+        branch = _branch(args, root)
+        if args.action == "url":
+            print(preview.preview_url(branch, args.domain) or "")
+            return 0
+        if args.action == "down":
+            removed = preview.down(branch)
+            print(f"removed {preview.project(preview.preview_id(branch))}" if removed else "none")
+            return 0
+        state = preview.up(root, args.ref, branch, domain=args.domain, timeout=args.timeout)
+    except preview.PreviewError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"preview {state.id} at {state.commit[:12]}: {state.url or 'local only (no domain)'}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="factory", description="AI software factory")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -117,6 +220,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--name", help="product name (default: folder name)")
     p_init.add_argument(
         "--skip-speckit", action="store_true", help=f"do not run specify init ({SPECKIT_VERSION})"
+    )
+    p_init.add_argument(
+        "--factory-repo", help="owner/repo of the software factory, for the CI workflow"
     )
     p_init.set_defaults(func=cmd_init)
 
@@ -153,6 +259,44 @@ def build_parser() -> argparse.ArgumentParser:
     p_replay.add_argument("--product", help="local product checkout (default: as recorded)")
     p_replay.add_argument("--out", help="run folder for the replay")
     p_replay.set_defaults(func=cmd_replay)
+
+    p_ci = sub.add_parser("ci", help="run CI steps: product commands, factory checks, scanners")
+    p_ci.add_argument("steps", nargs="+", choices=[*ci.STEPS, "all"])
+    p_ci.add_argument("--root", default=".")
+    p_ci.add_argument("--base", help="check the commits in base..head (push before, PR base)")
+    p_ci.add_argument("--head", default="HEAD")
+    p_ci.set_defaults(func=cmd_ci)
+
+    p_rev = sub.add_parser("review", help="read-only agent review against the constitution")
+    p_rev.add_argument("--root", default=".")
+    p_rev.add_argument("--base", required=True)
+    p_rev.add_argument("--head", default="HEAD")
+    p_rev.add_argument("--branch", help="feature branch (default: from CI or git)")
+    p_rev.add_argument("--spec", help="spec folder (default: from specs/*/source.yaml)")
+    p_rev.add_argument("--screenshots", help="folder of preview screenshots to review")
+    p_rev.add_argument("--json", help="write the verdict as JSON")
+    p_rev.add_argument("--markdown", help="write the review as Markdown (PR comment)")
+    p_rev.add_argument("--max-turns", type=int, default=40)
+    p_rev.add_argument("--model")
+    p_rev.set_defaults(func=cmd_review)
+
+    p_shot = sub.add_parser("screenshots", help="Playwright screenshots of a preview")
+    p_shot.add_argument("url")
+    p_shot.add_argument("--out", required=True)
+    p_shot.add_argument("--path", action="append", help="default: preview.screenshots")
+    p_shot.add_argument("--root", default=".")
+    p_shot.add_argument("--commit", help="wait until the preview serves this commit")
+    p_shot.add_argument("--timeout", type=int, default=600)
+    p_shot.set_defaults(func=cmd_screenshots)
+
+    p_prev = sub.add_parser("preview", help="per-feature preview from the product's compose file")
+    p_prev.add_argument("action", choices=["up", "down", "status", "url"])
+    p_prev.add_argument("--product", default=".", help="local product checkout")
+    p_prev.add_argument("--ref", default="HEAD", help="commit to deploy (up)")
+    p_prev.add_argument("--branch", help="feature branch (default: from CI or git)")
+    p_prev.add_argument("--domain", help=f"preview domain (default: ${preview.DOMAIN_ENV})")
+    p_prev.add_argument("--timeout", type=int, default=300)
+    p_prev.set_defaults(func=cmd_preview)
     return parser
 
 

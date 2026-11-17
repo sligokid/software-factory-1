@@ -16,8 +16,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from factory import tasks
 from factory.checks import git
 from factory.checks.rules import (
@@ -26,7 +24,7 @@ from factory.checks.rules import (
     protected_path_violations,
 )
 from factory.contract import Contract, ContractError, load
-from factory.runner import INPUT_REF, Mode, prompts
+from factory.runner import AGENT_GIT_NAME, INPUT_REF, Mode, prompts
 from factory.runner.tools import claude_command
 
 EXIT_OK, EXIT_REFUSED, EXIT_FAILED = 0, 2, 3
@@ -157,16 +155,8 @@ def prepare_repo(cfg: Config, repo: Path) -> None:
              cfg.repo_url, str(repo)],
             check=True, env=env,
         )  # fmt: skip
-    gitc(repo, "config", "user.name", os.environ.get("FACTORY_GIT_NAME", "factory-agent"))
+    gitc(repo, "config", "user.name", os.environ.get("FACTORY_GIT_NAME", AGENT_GIT_NAME))
     gitc(repo, "config", "user.email", os.environ.get("FACTORY_GIT_EMAIL", "factory@invalid"))
-
-
-def find_spec_dir(repo: Path, feature_id: str) -> str:
-    for source in sorted(repo.glob("specs/*/source.yaml")):
-        data = yaml.safe_load(source.read_text()) or {}
-        if str(data.get("id", "")) == feature_id:
-            return source.parent.relative_to(repo).as_posix()
-    raise RunError(f"no specs/*/source.yaml with id {feature_id}")
 
 
 def read_phases(repo: Path, spec_dir: str, rev: str | None = None) -> list[tasks.Phase]:
@@ -253,7 +243,9 @@ def run(cfg: Config, repo: Path) -> dict[str, Any]:
         contract = load(repo)
     except ContractError as exc:
         raise RunError(str(exc)) from exc
-    spec_dir = cfg.spec or find_spec_dir(repo, cfg.feature_id)
+    spec_dir = cfg.spec or tasks.find_spec_dir(repo, cfg.feature_id)
+    if spec_dir is None:
+        raise RunError(f"no specs/*/source.yaml with id {cfg.feature_id}")
     phase = select_phase(cfg, read_phases(repo, spec_dir))
     original_head = gitc(repo, "rev-parse", "HEAD")
     base = gitc(repo, "rev-parse", "HEAD~1") if cfg.mode is Mode.FIX else original_head
