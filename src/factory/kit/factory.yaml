@@ -1,0 +1,32 @@
+# Factory product contract. Schema: factory.schema.json in the software-factory repo.
+# Validate with: factory validate
+version: 1
+
+# Runner image the agents use: base | python | node
+runner: base
+
+commands:
+  # setup: <install dependencies>
+  verify: "echo 'FACTORY: set commands.verify to your lint, type check and test command' && exit 1"
+  # checks: <optional product-specific rule checks>
+
+# preview:
+#   compose: compose.preview.yaml
+#   service: web
+#   port: 3000
+#   healthcheck: /
+#   ui: true
+
+# egress:          # extra hosts agents may reach (package registries, APIs)
+#   - pypi.org
+#   - files.pythonhosted.org
+#   - registry.npmjs.org
+
+limits:
+  commit_lines: 300
+  # exclude: [uv.lock, pnpm-lock.yaml]
+  # files:
+  #   CLAUDE.md: 120
+
+# protected:       # extra paths agents may not change
+#   - src/generated/**

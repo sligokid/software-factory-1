@@ -1,19 +1,23 @@
 [project]
 name = "software-factory"
 version = "0.1.0"
-description = "Vertical-slice service built by the AI Software Factory"
+description = "Product-agnostic AI software factory: contract, checks, developer kit, runner and dispatcher"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.115",
-    "uvicorn>=0.30",
+    "jsonschema>=4.23",
+    "pyyaml>=6.0",
 ]
+
+[project.scripts]
+factory = "factory.cli:main"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.27",
     "mypy>=1.11",
     "pytest>=8.3",
     "ruff>=0.6",
+    "types-jsonschema",
+    "types-pyyaml",
 ]
 
 [build-system]
@@ -21,7 +25,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/app", "src/core", "src/market_es", "src/slices"]
+packages = ["src/factory"]
 
 [tool.ruff]
 line-length = 100
@@ -30,15 +34,14 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "S", "N"]
-ignore = ["S101"]
+ignore = ["S101", "S603", "S607"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 mypy_path = "src"
-packages = ["app", "core", "market_es", "slices", "factory"]
+packages = ["factory"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "src/slices", "factory"]
-pythonpath = ["src", "."]
+testpaths = ["tests"]
 addopts = "-q"
