@@ -7,22 +7,18 @@ sandboxed headless Claude Code run, delivering one PR per feature with a live pr
 The factory works with any product (frontend or backend, any language) that has a
 `.factory/factory.yaml` contract. See `PLAN.md` for the full design.
 
-## Install
+## Use the factory in your own repo
 
 ```bash
-uv tool install specify-cli==1.4.1     # Spec Kit (pinned)
-uv tool install --editable .           # the `factory` command
+mkdir my-product && cd my-product                        # or an existing repo
+uv tool install specify-cli==1.4.1                       # Spec Kit (once per machine)
+uv tool install --editable /path/to/software-factory     # the `factory` command (once per machine)
+factory init                                             # Spec Kit, /factory-* skills, constitution, factory.yaml
+claude                                                   # then /factory-setup (fills in and validates .factory/factory.yaml)
 ```
 
-## Make a repository a factory product
-
-```bash
-cd ~/git/my-product
-factory init                 # Spec Kit + factory skills + constitution base + contract starter
-# edit .factory/factory.yaml (runner, setup/verify commands, preview, egress)
-# fill in the product principles with /speckit-constitution in Claude Code
-factory validate
-```
+Fill in the product principles with `/speckit-constitution`. To run agents locally, also run
+`make images` in the factory repo and `export CLAUDE_CODE_OAUTH_TOKEN=...` (from `claude setup-token`).
 
 ## Commands
 
