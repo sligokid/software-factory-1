@@ -1,4 +1,4 @@
-# Factory CI: checks, reviewer and preview, from the software factory's reusable workflow.
+# Factory: CI, reviewer, preview and the agent loop, from the software factory's reusable workflow.
 # The product's commands live in .factory/factory.yaml; keep this file as it is.
 name: factory
 
@@ -6,10 +6,29 @@ on:
   push:
     branches: [main, "feature/**"]
   pull_request:
-    types: [ready_for_review, closed]
+    types: [ready_for_review, closed, labeled]
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Factory step (normally dispatched by the factory itself)
+        required: true
+        type: choice
+        options: [implement, fix, converge, rework, final]
+      phase:
+        description: Phase number (default the next open phase)
+        type: string
+        default: ""
+      feedback-run:
+        description: Run id whose factory-feedback artifact the agent reads
+        type: string
+        default: ""
 
 concurrency:
-  group: factory-${{ github.ref }}-${{ github.event_name }}
+  group: ${{ github.event_name == 'push' && format('factory-push-{0}', github.ref) || format('factory-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
@@ -19,6 +38,8 @@ jobs:
       image-prefix: ghcr.io/OWNER/software-factory/runner # FACTORY: the factory's published images
     secrets: inherit
     permissions:
-      contents: read
+      contents: write
+      actions: write
+      issues: write
       packages: read
       pull-requests: write

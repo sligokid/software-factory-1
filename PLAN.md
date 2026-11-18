@@ -10,7 +10,7 @@ A developer turns a Linear issue, or a document they provide, into a Spec Kit sp
 
 ```
 ┌──────────────────────── software-factory (this repo) ───────────────────────┐
-│ dispatcher        Linear + GitHub watcher, phase loop, limits, metrics      │
+│ dispatcher        phase loop in GitHub Actions: triggers, limits, status    │
 │ runner images     sandboxed Claude Code + Spec Kit, one per toolchain       │
 │                   (base, python, node; more as needed)                      │
 │ CI workflows      reusable GitHub workflows called by product repos         │
@@ -146,10 +146,10 @@ The factory is stateless. Issue state comes from Linear, progress from the check
 | # | Item | Needed for |
 |---|------|-----------|
 | P1 | GitHub repo for `software-factory` (this folder), plus a test product repo, attached to the project | Stage 3 |
-| P2 | GitHub App (contents, pull requests, checks) installed on product repos, to mint a token per run | Stage 4 |
+| P2 | Not needed: stage 4 pushes with the workflow's `GITHUB_TOKEN` and chains runs with `workflow_dispatch`. A GitHub App is only needed if branch protection must block that token. | - |
 | P3 | Linear access and the eight states above; Linear MCP in developers' Claude Code (Linear mode only) | Stages 1 and 4 |
 | P4 | `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) | Stages 2 and 4 |
-| P5 | Host for the dispatcher, agent containers and previews, with Docker | Stages 2 to 4 |
+| P5 | Host with Docker for live previews (self-hosted runner). Agent runs and CI use GitHub-hosted runners; local agent runs use a developer machine with Docker. | Stage 3 (previews) |
 | P6 | Package mirrors or registries to allow (PyPI, npm) | Stage 2 |
 | P7 | ngrok reserved domain for preview URLs (`eng-123.<domain>`), with basic auth or an IP allowlist | Stage 3 |
 
@@ -190,13 +190,46 @@ The reviewer ran on the ready PR and posted its comment (pass, 2 advisory findin
 
 **Untested:** the public ngrok preview and its traffic policy (needs a reserved domain and `NGROK_AUTHTOKEN`; only the local preview has run).
 
-### Stage 4: Dispatcher and Linear integration
-- [ ] Triggers: Linear webhook (or 30-second polling) for Ready for agent, mapping each Linear team or project to a product repo; and the `factory:ready` PR label for document-mode features. GitHub events for reviews, comments, close and labels.
-- [ ] Phase loop, fixes, converge, rework and replan with their limits; runner chosen from `factory.yaml`.
-- [ ] New container and repo-scoped GitHub App token per run; turn limit and wall-clock timeout.
-- [ ] Status: PR labels and comments always; Linear state changes and comments only when `source.yaml` says `linear`. OTel metrics.
+### Stage 4: Dispatcher on GitHub Actions
+The dispatcher is not a service: it is part of the reusable workflow, and every step runs on GitHub-hosted runners. Each workflow run does one step of the loop and then starts the next run itself, so after `/factory-handoff` nothing is manual until the PR is ready for review. It automates exactly the decisions in `MANUAL-FLOW.md`.
 
-**Done when:** a two-phase issue in a test product ends as one ready PR with correct Linear states and comments; a forced timeout lands in Agent failed; closing the PR lands in Needs replan.
+```text
+developer: /factory-handoff -> draft PR + label factory:ready
+   |
+   v  pull_request labeled | workflow_dispatch (from the previous run) | pull_request_review | issue_comment
+one run of product.yml, concurrency group per feature branch
+   agent    ubuntu-latest (Docker preinstalled): factory agent implement|fix|converge|rework
+            in the same sandbox as locally (runner image from ghcr.io); push with GITHUB_TOKEN
+   checks   as in stage 3, on the new commit
+   review   as in stage 3, on the new commit
+   next     reads state from GitHub and decides:
+              passed, phases left      -> dispatch implement (next phase)
+              failed, fixes left       -> dispatch fix (failure report as feedback)
+              all phases [X]           -> dispatch converge
+              converge added a phase   -> dispatch implement
+              converged                -> PR ready, factory:awaiting-review
+              limit hit, timeout, crash -> factory:failed + comment, stop
+   |
+   v  pull_request ready_for_review -> reviewer on the whole PR (stage 3)
+developer: merge | request changes (-> rework) | close (-> factory:needs-replan)
+```
+
+Why this works without a server or a GitHub App: pushes made with `GITHUB_TOKEN` do not start workflows, but `workflow_dispatch` is the documented exception, so the run itself runs checks and review as later jobs and then dispatches the next step. State lives only in GitHub: done phases in `tasks.md`, counters in a marker in the PR body, history in PR comments.
+
+- [ ] `factory next`: reads `tasks.md`, the PR, its labels and the marker, and the run's job results; prints the next step (mode, phase, feedback) or a final state. Pure decision logic, unit-tested on recorded states.
+- [ ] Limits, from `factory.yaml` with defaults: 2 fixes per phase, 2 converge rounds, 2 rework rounds, the existing turn limit and wall-clock timeout.
+- [ ] `product.yml`: `agent` and `next` jobs; `agent` installs the factory CLI at the workflow's ref, runs `factory agent` and pushes; `checks` and `review` run after it in the same run; the failure report from `checks` goes to `next` as an artifact.
+- [ ] Kit `factory.yml`: triggers `workflow_dispatch` (inputs: branch, mode, phase), `pull_request` labeled, `pull_request_review` and `issue_comment` (`@agent`); permissions `contents: write`, `actions: write`, `pull-requests: write`.
+- [ ] Status: PR labels (`factory:working`, `factory:awaiting-review`, `factory:failed`, `factory:needs-replan`), a comment per run (phase, commit, turns, cost, time, transcript artifact link), the phase table in the PR body. `human-takeover` label pauses the loop.
+- [ ] Run folders (`run.json`, transcript, runner and egress logs) uploaded as Actions artifacts; `factory replay` accepts a downloaded artifact.
+- [ ] Linear mode: a relay from the Linear webhook to `repository_dispatch` (or a scheduled workflow polling Linear), and Linear states and comments when `source.yaml` says `linear`.
+- [ ] OTel metrics, or a metrics summary per feature in the final PR comment until a collector exists.
+
+Not on GitHub-hosted runners: a live preview link, because a preview outlives a job. It keeps the self-hosted preview runner (P5) from stage 3. The reviewer's screenshots can instead come from a short-lived stack started inside the review job.
+
+Cost: free on public product repos; private repos use Actions minutes for every agent run. Each run must fit in one job (6 hours; the factory's timeout is 1 hour). Agents run on amd64 images, as CI does.
+
+**Done when:** in the test product, a two-phase document-mode feature handed over with `/factory-handoff` ends as one ready PR with no manual step; a forced CI failure is fixed by a fix run; a forced timeout ends in `factory:failed`; a requested change produces a rework commit; closing the PR sets `factory:needs-replan`. Linear mode: the same feature from a Linear issue ends with the correct Linear states and comments.
 
 ### Stage 5: Pilot products
 - [ ] Pilot products and their specifics (stack, constitution, preview stack) are defined later, outside this repo.

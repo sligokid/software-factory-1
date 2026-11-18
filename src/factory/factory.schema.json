@@ -50,6 +50,9 @@
       "additionalProperties": false,
       "properties": {
         "commit_lines": {"type": "integer", "minimum": 1},
+        "fixes": {"type": "integer", "minimum": 0, "description": "Fix runs per phase before the feature fails (default 2)."},
+        "converge_rounds": {"type": "integer", "minimum": 0, "description": "Converge rounds that may add phases (default 2)."},
+        "rework_rounds": {"type": "integer", "minimum": 0, "description": "Rework runs for review feedback (default 2)."},
         "exclude": {"type": "array", "items": {"type": "string"}},
         "files": {
           "type": "object",

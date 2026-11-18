@@ -21,7 +21,7 @@ def test_workflows_are_valid_yaml(path: Path) -> None:
 def test_product_workflow_pulls_images_of_this_version() -> None:
     data = yaml.safe_load((ROOT / ".github" / "workflows" / "product.yml").read_text())
     assert data["env"]["FACTORY_VERSION"] == __version__
-    assert set(data["jobs"]) == {"context", "checks", "review", "preview"}
+    assert set(data["jobs"]) == {"context", "agent", "checks", "review", "next", "preview"}
     steps = " ".join(str(s.get("run", "")) for s in data["jobs"]["checks"]["steps"])
     for step in ("setup", "verify", "checks", "factory", "secrets", "sast", "deps"):
         assert f"factory ci {step}" in steps
@@ -29,8 +29,27 @@ def test_product_workflow_pulls_images_of_this_version() -> None:
 
 def test_kit_workflow_calls_the_reusable_workflow() -> None:
     data = yaml.safe_load(KIT_WORKFLOW.read_text())
-    assert data["jobs"]["factory"]["uses"].endswith("/.github/workflows/product.yml@v1")
-    assert data[True]["pull_request"]["types"] == ["ready_for_review", "closed"]  # `on:` key
+    job = data["jobs"]["factory"]
+    assert job["uses"].endswith("/.github/workflows/product.yml@v1")
+    on = data[True]  # the `on:` key
+    assert on["pull_request"]["types"] == ["ready_for_review", "closed", "labeled"]
+    assert {"pull_request_review", "issue_comment", "workflow_dispatch"} <= set(on)
+    modes = on["workflow_dispatch"]["inputs"]["mode"]["options"]
+    assert modes == ["implement", "fix", "converge", "rework", "final"]
+    # the agent pushes and the dispatcher starts the next run with the workflow's own token
+    assert job["permissions"]["contents"] == "write" and job["permissions"]["actions"] == "write"
+
+
+def test_dispatcher_jobs_chain_one_step_per_run() -> None:
+    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "product.yml").read_text())["jobs"]
+    assert jobs["agent"]["needs"] == "context"
+    assert jobs["checks"]["needs"] == ["context", "agent"]
+    assert jobs["next"]["needs"] == ["context", "agent", "checks", "review"]
+    agent = " ".join(str(s.get("run", "")) for s in jobs["agent"]["steps"])
+    assert "/opt/factory" in agent and "factory agent" in agent and "git push" in agent
+    nxt = " ".join(str(s.get("run", "")) for s in jobs["next"]["steps"])
+    assert "factory next" in nxt and "gh workflow run" in nxt
+    assert "OWNER|MEMBER|COLLABORATOR" in jobs["context"]["steps"][1]["run"]
 
 
 def test_init_installs_ci_workflow(

@@ -34,10 +34,13 @@ RUN arch="$(dpkg --print-architecture)" \
       uv tool install --python 3.12 "semgrep==${SEMGREP_VERSION}" \
  && rm -rf /root/.cache
 
+# The factory itself, also kept as a wheel in /opt/factory: the GitHub Actions jobs that drive
+# agent runs install the CLI from it, so the host side always matches the images.
 COPY pyproject.toml uv.lock README.md /tmp/factory/
 COPY src /tmp/factory/src
-RUN UV_TOOL_DIR=/opt/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
-      uv tool install --python 3.12 /tmp/factory \
+RUN uv build --wheel --python 3.12 --out-dir /opt/factory /tmp/factory \
+ && UV_TOOL_DIR=/opt/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
+      uv tool install --python 3.12 /opt/factory/*.whl \
  && rm -rf /tmp/factory /root/.cache
 
 # Claude Code native build, pinned; the binary is copied out of root's home.

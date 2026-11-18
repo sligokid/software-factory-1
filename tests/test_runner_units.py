@@ -40,6 +40,9 @@ def test_prompts_name_the_phase_and_feedback() -> None:
     phase = Phase(2, "Core", [Task("T003", False, "x"), Task("T004", False, "y")])
     text = prompts.build(Mode.IMPLEMENT, CONTRACT, "specs/001-x", phase=phase)
     assert "only Phase 2: Core" in text and "T003-T004" in text and "pnpm arch" in text
+    assert "previous attempt" not in text
+    retry = prompts.build(Mode.IMPLEMENT, CONTRACT, "specs/001-x", phase=phase, feedback="boom")
+    assert "A previous attempt failed" in retry and "boom" in retry
     text = prompts.build(Mode.REWORK, CONTRACT, "specs/001-x", feedback="rename foo")
     assert "rename foo" in text
 

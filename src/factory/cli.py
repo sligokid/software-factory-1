@@ -6,7 +6,7 @@ import os
 import sys
 from pathlib import Path
 
-from factory import ci, preview, review, screenshots, tasks
+from factory import ci, dispatch, preview, review, screenshots, tasks
 from factory.checks import git
 from factory.checks.rules import (
     commit_size_violation,
@@ -122,6 +122,52 @@ def _branch(args: argparse.Namespace, root: Path) -> str:
         or env.get("GITHUB_REF_NAME")
         or (git.current_branch(root))
     )
+
+
+def _path(value: str | None) -> Path | None:
+    return Path(value) if value else None
+
+
+def cmd_next(args: argparse.Namespace) -> int:
+    """Decide the next step after a factory workflow run and record it on the PR."""
+    root = Path(args.root)
+    env = os.environ
+    branch = _branch(args, root)
+    try:
+        contract = load(root)
+    except ContractError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    feature = tasks.feature_id(branch)
+    spec = tasks.find_spec_dir(root, feature) if feature else None
+    phases = tasks.parse((root / spec / "tasks.md").read_text()) if spec else []
+    outcome = dispatch.outcome_from_files(
+        args.step, args.phase, _path(args.run_json), args.checks, args.review,
+        _path(args.ci_report), _path(args.review_report), args.reason or "",
+    )  # fmt: skip
+    gh = dispatch.GitHub(args.repo or env.get("GITHUB_REPOSITORY", ""))
+    pr = gh.pr(branch)
+    if pr is None:
+        print(f"error: no pull request for {branch}", file=sys.stderr)
+        return 1
+    labels = [lbl["name"] for lbl in pr.get("labels", [])]
+    decision = dispatch.decide(outcome, phases, dispatch.read_state(pr.get("body", "")),
+                               contract, labels)  # fmt: skip
+    run_url = args.run_url or "{}/{}/actions/runs/{}".format(
+        env.get("GITHUB_SERVER_URL", "https://github.com"), env.get("GITHUB_REPOSITORY", ""),
+        env.get("GITHUB_RUN_ID", ""),
+    )  # fmt: skip
+    if not args.dry_run:
+        dispatch.record(gh, pr, outcome, decision, phases, run_url)
+    if args.feedback_out:
+        Path(args.feedback_out).write_text(decision.feedback)
+    outputs = {"action": decision.action.value, "mode": decision.mode,
+               "phase": str(decision.phase or ""), "reason": decision.reason}  # fmt: skip
+    if out := env.get("GITHUB_OUTPUT"):
+        with open(out, "a") as fh:
+            fh.writelines(f"{k}={v.splitlines()[0] if v else ''}\n" for k, v in outputs.items())
+    print(json.dumps(outputs))
+    return 0
 
 
 def cmd_ci(args: argparse.Namespace) -> int:
@@ -258,6 +304,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_ci.add_argument("--base", help="check the commits in base..head (push before, PR base)")
     p_ci.add_argument("--head", default="HEAD")
     p_ci.set_defaults(func=cmd_ci)
+
+    p_next = sub.add_parser("next", help="dispatcher: decide and record the next step (CI)")
+    p_next.add_argument("--step", required=True, choices=[s.value for s in dispatch.Step])
+    p_next.add_argument("--phase", type=int, help="phase the run worked on")
+    p_next.add_argument("--run-json", help="the agent run's run.json")
+    p_next.add_argument("--checks", default="skipped", help="checks job result")
+    p_next.add_argument("--review", default="skipped", help="review job result")
+    p_next.add_argument("--ci-report", help="checks output, passed to a fix run")
+    p_next.add_argument("--review-report", help="review Markdown, passed to a fix or rework run")
+    p_next.add_argument("--reason", help="why (replan)")
+    p_next.add_argument("--branch", help="feature branch (default: from CI or git)")
+    p_next.add_argument("--root", default=".")
+    p_next.add_argument("--repo", help="owner/repo (default: $GITHUB_REPOSITORY)")
+    p_next.add_argument("--run-url", help="link for the PR comment (default: this run)")
+    p_next.add_argument("--feedback-out", help="write the next run's feedback here")
+    p_next.add_argument("--dry-run", action="store_true", help="decide only; change nothing")
+    p_next.set_defaults(func=cmd_next)
 
     p_rev = sub.add_parser("review", help="read-only agent review against the constitution")
     p_rev.add_argument("--root", default=".")

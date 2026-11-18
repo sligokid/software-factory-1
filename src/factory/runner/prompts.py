@@ -37,6 +37,8 @@ def build(
             f"Mark each task of this phase [X] in {tasks} as you complete it. Treat incomplete "
             "checklists as approved: do not stop to ask."
         )
+        if feedback.strip():  # a retry: the previous attempt at this phase failed
+            body += f"\n\nA previous attempt failed:\n```\n{feedback.strip()}\n```"
     elif mode is Mode.FIX:
         assert phase is not None
         body = (

@@ -39,6 +39,7 @@ Fill in the product principles with `/speckit-constitution`. To run agents local
 | `factory screenshots URL --out DIR [--commit SHA]` | Playwright desktop and mobile screenshots of `preview.screenshots` paths, after the preview serves the commit. |
 | `factory preview up\|down\|status\|url` | Per-feature preview from the product's compose file, on the factory host. |
 | `factory replay <run folder>` | Re-runs a recorded run from the same commit, mode, phase, feedback and image; the result is kept under `refs/factory/runs/` and the branch is not moved. |
+| `factory next --step S ...` | The dispatcher, in CI: reads the run's agent result, checks and review, `tasks.md` and the PR's counters, records the outcome on the PR (labels, comment, phase table) and prints the next step to dispatch. |
 
 ## How the factory uses Docker
 
@@ -133,6 +134,36 @@ which calls this repo's reusable workflow (`.github/workflows/product.yml@v1`):
 | push to `feature/**` | `review` of the pushed commits, posted on the PR; `preview` redeploy |
 | PR ready for review | `review` of the whole PR (with screenshots when `preview.ui`) |
 | PR closed or merged | `preview` removed |
+
+### The agent loop (dispatcher)
+
+After `/factory-handoff` adds the `factory:ready` label, the factory implements the feature on
+GitHub-hosted runners with no manual step. Each workflow run does one step:
+
+```text
+agent   factory agent <mode> in the sandbox (Docker on ubuntu-latest), push with GITHUB_TOKEN
+checks  as above, on the agent's commit
+review  as above, on the agent's commit
+next    factory next: record the result on the PR, then dispatch the next run
+          phase passed      -> implement the next open phase, or converge when none is left
+          CI/review failed  -> fix (limits.fixes, default 2), then factory:failed
+          converge gaps     -> implement the new phase (limits.converge_rounds)
+          converged         -> final: review of the whole PR -> PR ready, factory:awaiting-review
+```
+
+| Event | Step |
+|-------|------|
+| label `factory:ready` | implement the first open phase |
+| review with changes requested, or a comment containing `@agent` (owners, members and collaborators only) | rework with the comments (`limits.rework_rounds`) |
+| comment `@agent replan`, or PR closed without merging | `factory:needs-replan` |
+| label `human-takeover` | the loop pauses at the next step; remove it and add `factory:ready` again to resume |
+
+Status lives on the PR: the labels `factory:working`, `factory:awaiting-review`,
+`factory:failed`, `factory:needs-replan`, one comment per run (result, turns, cost, time) and a
+phase table plus counters in the PR body. Each run's folder is kept as the `factory-run`
+artifact; download it and run `factory replay <folder> --product <checkout>` to reproduce a run.
+The agent jobs install the factory CLI from the wheel in the runner image, so they always match
+the image version.
 
 Setup: tag a release `v1` (the `images` workflow publishes `ghcr.io/<owner>/<repo>/runner-*`
 and the packages must be readable by product repos); secrets `CLAUDE_CODE_OAUTH_TOKEN`,

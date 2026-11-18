@@ -15,9 +15,11 @@ products. It must never contain product-specific code, stacks or rules. See `PLA
 - `src/factory/ci.py`, `review.py`, `screenshots.py`, `preview.py`: `factory ci`, the read-only
   reviewer, Playwright screenshots and per-feature previews. `.github/workflows/product.yml` is
   the reusable workflow products call (kit: `factory-ci.yml`); `images.yml` publishes images.
+- `src/factory/dispatch.py`: `factory next`, the dispatcher's decision after each workflow run
+  (state in the PR body, labels, comments). The loop itself is the `agent` and `next` jobs in
+  `product.yml`; each run does one step and dispatches the next with `workflow_dispatch`.
 - `src/factory/cli.py`: the `factory` command (`init`, `validate`, `check`, `agent`, `replay`,
-  `ci`, `review`, `screenshots`, `preview`).
-- Stage 4 adds the dispatcher.
+  `ci`, `review`, `screenshots`, `preview`, `next`).
 
 ## Commands
 - `make all`: ruff, mypy (strict), pytest. Must pass before every commit.

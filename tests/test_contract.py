@@ -17,6 +17,7 @@ def test_minimal_contract_gets_defaults() -> None:
     contract = parse(MINIMAL)
     assert contract.runner == "python"
     assert contract.commit_lines == 300
+    assert (contract.fixes, contract.converge_rounds, contract.rework_rounds) == (2, 2, 2)
     assert contract.protected == DEFAULT_PROTECTED
     assert contract.allowed_hosts[:1] == ["api.anthropic.com"]
 
@@ -28,7 +29,14 @@ def test_full_contract() -> None:
             "commands": {"setup": "uv sync", "verify": "make all", "checks": "make check"},
             "preview": {"compose": "compose.preview.yaml", "service": "api", "port": 8000},
             "egress": ["pypi.org"],
-            "limits": {"commit_lines": 200, "exclude": ["uv.lock"], "files": {"README.md": 50}},
+            "limits": {
+                "commit_lines": 200,
+                "exclude": ["uv.lock"],
+                "files": {"README.md": 50},
+                "fixes": 0,
+                "converge_rounds": 1,
+                "rework_rounds": 3,
+            },
             "protected": ["src/generated/**"],
         }
     )
@@ -37,6 +45,7 @@ def test_full_contract() -> None:
     assert contract.exclude == ["specs/**", "uv.lock"]
     assert contract.file_limits["README.md"] == 50
     assert contract.protected[-1] == "src/generated/**"
+    assert (contract.fixes, contract.converge_rounds, contract.rework_rounds) == (0, 1, 3)
 
 
 @pytest.mark.parametrize(

@@ -2,13 +2,25 @@
 #
 #   uses: <owner>/software-factory/.github/workflows/product.yml@v1
 #
-# push (main, feature/**)      checks: setup, verify, checks, factory checks, secrets, SAST, deps
-# push (feature/**)            reviewer on the pushed commits; preview redeploy
-# pull_request ready_for_review  reviewer on the whole PR
-# pull_request closed          preview removed
+# CI (stage 3)
+#   push (main, feature/**)          checks: setup, verify, checks, factory checks, secrets, SAST, deps
+#   push (feature/**)                reviewer on the pushed commits; preview redeploy
+#   pull_request ready_for_review    reviewer on the whole PR
+#   pull_request closed              preview removed
+#
+# Dispatcher (stage 4): each run does one step, then `factory next` dispatches the next one
+#   pull_request labeled factory:ready      implement the first open phase
+#   workflow_dispatch mode=...              implement | fix | converge | rework | final (review)
+#   pull_request_review changes_requested   rework with the review comments
+#   issue_comment "@agent ..."              rework with the comment; "@agent replan" stops
+#   pull_request closed without merging     factory:needs-replan
+#   agent -> checks -> review -> next: one sandboxed agent run on a GitHub-hosted runner, its
+#   commit pushed with GITHUB_TOKEN, checked and reviewed in the same run; `next` records the
+#   result on the PR and dispatches the following step (workflow_dispatch, which GITHUB_TOKEN
+#   may trigger). Only OWNER, MEMBER and COLLABORATOR reviews and comments start agent runs.
 #
 # Repository or organisation settings:
-#   secrets  CLAUDE_CODE_OAUTH_TOKEN   reviewer (skipped with a notice when missing)
+#   secrets  CLAUDE_CODE_OAUTH_TOKEN   agent runs and reviewer (reviewer skipped when missing)
 #            FACTORY_PREVIEW_AUTH      user:password for previews (and screenshots)
 #            NGROK_AUTHTOKEN           preview tunnel (preview runner only)
 #   vars     FACTORY_IMAGE_PREFIX      default ghcr.io/<owner>/software-factory/runner
@@ -34,14 +46,16 @@ on:
         required: false
 
 env:
-  FACTORY_VERSION: "0.3.0" # runner image tag: always the factory package version
+  FACTORY_VERSION: "0.4.0" # runner image tag: always the factory package version
 
 jobs:
   context:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: read
     outputs:
+      prefix: ${{ steps.ctx.outputs.prefix }}
       image: ${{ steps.ctx.outputs.image }}
       reviewer: ${{ steps.ctx.outputs.reviewer }}
       base: ${{ steps.ctx.outputs.base }}
@@ -49,6 +63,11 @@ jobs:
       branch: ${{ steps.ctx.outputs.branch }}
       preview: ${{ steps.ctx.outputs.preview }}
       ui: ${{ steps.ctx.outputs.ui }}
+      step: ${{ steps.ctx.outputs.step }}
+      phase: ${{ steps.ctx.outputs.phase }}
+      reason: ${{ steps.ctx.outputs.reason }}
+      feedback-run: ${{ steps.ctx.outputs.feedback-run }}
+      takeover: ${{ steps.ctx.outputs.takeover }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,24 +78,80 @@ jobs:
         env:
           PREFIX: ${{ inputs.image-prefix || vars.FACTORY_IMAGE_PREFIX }}
           EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
           BEFORE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          HEAD_REF: ${{ github.head_ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          LABEL: ${{ github.event.label.name }}
+          IN_MODE: ${{ github.event.inputs.mode }}
+          IN_PHASE: ${{ github.event.inputs.phase }}
+          IN_FEEDBACK_RUN: ${{ github.event.inputs.feedback-run }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+          REVIEW_ID: ${{ github.event.review.id }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          ISSUE_IS_PR: ${{ github.event.issue.pull_request.url != '' }}
+          ASSOCIATION: ${{ github.event.review.author_association || github.event.comment.author_association }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           prefix="${PREFIX:-ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/software-factory/runner}"
           runner="$(yq '.runner' .factory/factory.yaml)"
-          if [ "$EVENT" = pull_request ]; then
-            base="$PR_BASE" head="$PR_HEAD" branch="$HEAD_REF"
-          else
-            head="$GITHUB_SHA" branch="$GITHUB_REF_NAME" base="$BEFORE"
-            if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ]; then
-              base="$(git merge-base "$head" "origin/$DEFAULT_BRANCH" 2>/dev/null || true)"
-            fi
+          trusted=false
+          case "$ASSOCIATION" in OWNER|MEMBER|COLLABORATOR) trusted=true ;; esac
+          step="" phase="" reason="" feedback_run="" branch="" head="$GITHUB_SHA" base=""
+          feedback="$RUNNER_TEMP/feedback/feedback.txt"
+          mkdir -p "$(dirname "$feedback")"
+          case "$EVENT" in
+            pull_request)
+              branch="$PR_HEAD_REF" head="$PR_HEAD" base="$PR_BASE"
+              if [ "$ACTION" = labeled ] && [ "$LABEL" = factory:ready ]; then step=implement; fi
+              if [ "$ACTION" = closed ] && [ "$PR_MERGED" != true ]; then
+                step=replan reason="PR closed without merging"
+              fi ;;
+            workflow_dispatch)
+              branch="$GITHUB_REF_NAME" step="$IN_MODE" phase="$IN_PHASE" feedback_run="$IN_FEEDBACK_RUN" ;;
+            pull_request_review)
+              branch="$PR_HEAD_REF" head="$PR_HEAD" base="$PR_BASE"
+              if [ "$REVIEW_STATE" = changes_requested ] && $trusted; then
+                step=rework feedback_run="$GITHUB_RUN_ID"
+                { echo "$REVIEW_BODY"; echo
+                  gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews/$REVIEW_ID/comments" \
+                    --jq '.[] | "\(.path):\(.line // .original_line // "-"): \(.body)"'
+                } > "$feedback"
+              fi ;;
+            issue_comment)
+              if [ "$ISSUE_IS_PR" = true ] && $trusted && [[ "$COMMENT_BODY" == *"@agent"* ]]; then
+                branch="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)"
+                head="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid -q .headRefOid)"
+                if [[ "$COMMENT_BODY" == *"@agent replan"* ]]; then
+                  step=replan reason="replan requested in a PR comment"
+                else
+                  step=rework feedback_run="$GITHUB_RUN_ID"
+                  printf '%s\n' "$COMMENT_BODY" > "$feedback"
+                fi
+              fi ;;
+            *)
+              branch="$GITHUB_REF_NAME" base="$BEFORE"
+              if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ]; then
+                base="$(git merge-base "$head" "origin/$DEFAULT_BRANCH" 2>/dev/null || true)"
+              fi ;;
+          esac
+          if [ "$step" = final ]; then
+            base="$(git merge-base "$head" "origin/$DEFAULT_BRANCH" 2>/dev/null || true)"
+          fi
+          takeover=false
+          if [ -n "$step" ] && [ -n "$PR_NUMBER$branch" ]; then
+            labels="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" --state all \
+              --json labels -q '.[0].labels[].name' 2>/dev/null || true)"
+            if grep -qx human-takeover <<<"$labels"; then takeover=true; fi
           fi
           {
+            echo "prefix=${prefix}"
             echo "image=${prefix}-${runner}:${FACTORY_VERSION}"
             echo "reviewer=${prefix}-reviewer:${FACTORY_VERSION}"
             echo "base=${base}"
@@ -84,11 +159,103 @@ jobs:
             echo "branch=${branch}"
             echo "preview=$(yq '.preview != null' .factory/factory.yaml)"
             echo "ui=$(yq '.preview.ui // false' .factory/factory.yaml)"
+            echo "step=${step}"
+            echo "phase=${phase}"
+            echo "reason=${reason}"
+            echo "feedback-run=${feedback_run}"
+            echo "takeover=${takeover}"
           } | tee -a "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: factory-feedback
+          path: ${{ runner.temp }}/feedback/feedback.txt
+          overwrite: true
+          if-no-files-found: ignore
+
+  agent:
+    needs: context
+    if: >-
+      ${{ contains(fromJSON('["implement","fix","converge","rework"]'), needs.context.outputs.step)
+      && needs.context.outputs.takeover != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: factory-agent-${{ github.repository }}-${{ needs.context.outputs.branch }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
+      packages: read
+    env:
+      BRANCH: ${{ needs.context.outputs.branch }}
+      STEP: ${{ needs.context.outputs.step }}
+      PHASE: ${{ needs.context.outputs.phase }}
+      IMAGE: ${{ needs.context.outputs.image }}
+      FACTORY_IMAGE_PREFIX: ${{ needs.context.outputs.prefix }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    outputs:
+      status: ${{ steps.run.outputs.status }}
+      commit: ${{ steps.run.outputs.commit }}
+      base: ${{ steps.run.outputs.base }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.context.outputs.branch }}
+      - uses: astral-sh/setup-uv@v6
+      - name: factory CLI from the runner image
+        run: |
+          docker pull -q "$IMAGE"
+          id="$(docker create "$IMAGE")"
+          docker cp "$id:/opt/factory" "$RUNNER_TEMP/factory-dist"
+          docker rm "$id" >/dev/null
+          uv tool install --python 3.12 "$RUNNER_TEMP"/factory-dist/*.whl
+      - name: feedback from the previous step
+        if: needs.context.outputs.feedback-run != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: factory-feedback
+          path: ${{ runner.temp }}/feedback
+          run-id: ${{ needs.context.outputs.feedback-run }}
+          github-token: ${{ github.token }}
+      - id: run
+        name: factory agent ${{ needs.context.outputs.step }} ${{ needs.context.outputs.phase }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN is not set: the factory cannot run agents"
+            exit 1
+          fi
+          before="$(git rev-parse HEAD)"
+          args=("$STEP" --out "$RUNNER_TEMP/run")
+          [ -n "$PHASE" ] && args+=(--phase "$PHASE")
+          fb="$RUNNER_TEMP/feedback/feedback.txt"
+          [ -s "$fb" ] && args+=(--feedback-file "$fb")
+          factory agent "${args[@]}"
+          code=$?
+          status="$(jq -r '.result.status // "failed"' "$RUNNER_TEMP/run/run.json" 2>/dev/null || echo failed)"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" = ok ] && [ "$(git rev-parse HEAD)" != "$before" ]; then
+            git push --force-with-lease="refs/heads/$BRANCH:$before" origin "HEAD:refs/heads/$BRANCH"
+            echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            echo "base=$(jq -r '.result.base' "$RUNNER_TEMP/run/run.json")" >> "$GITHUB_OUTPUT"
+          fi
+          # A failed agent run is a result for `next` to act on, not a job failure.
+          [ "$status" = ok ] || [ -f "$RUNNER_TEMP/run/run.json" ] || exit "$code"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: factory-run
+          path: ${{ runner.temp }}/run
+          if-no-files-found: ignore
 
   checks:
-    needs: context
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [context, agent]
+    if: >-
+      ${{ !cancelled() && needs.context.result == 'success'
+      && (github.event_name == 'push' || needs.agent.outputs.commit != '') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -99,42 +266,56 @@ jobs:
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
     env:
-      BASE: ${{ needs.context.outputs.base }}
+      BASE: ${{ needs.agent.outputs.base || needs.context.outputs.base }}
+      REPORT: /tmp/factory-ci-report.txt
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.agent.outputs.commit || github.sha }}
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - run: factory validate
+      - run: factory validate 2>&1 | tee -a "$REPORT"
       - id: setup
-        run: factory ci setup
+        run: factory ci setup 2>&1 | tee -a "$REPORT"
       - name: verify
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: factory ci verify
+        run: factory ci verify 2>&1 | tee -a "$REPORT"
       - name: checks
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: factory ci checks
+        run: factory ci checks 2>&1 | tee -a "$REPORT"
       - name: factory checks (sizes, commit size, agent protected paths)
         if: ${{ !cancelled() }}
-        run: factory ci factory --base "$BASE"
+        run: factory ci factory --base "$BASE" 2>&1 | tee -a "$REPORT"
       - name: secret scan
         if: ${{ !cancelled() }}
-        run: factory ci secrets --base "$BASE"
+        run: factory ci secrets --base "$BASE" 2>&1 | tee -a "$REPORT"
       - name: SAST
         if: ${{ !cancelled() }}
-        run: factory ci sast --base "$BASE"
+        run: factory ci sast --base "$BASE" 2>&1 | tee -a "$REPORT"
       - name: dependency scan
         if: ${{ !cancelled() }}
-        run: factory ci deps
+        run: factory ci deps 2>&1 | tee -a "$REPORT"
+      - run: cp "$REPORT" ci-report.txt
+        if: failure()
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: factory-ci-report
+          path: ci-report.txt
 
   review:
-    needs: [context, checks]
+    needs: [context, agent, checks]
     if: >-
       ${{ !cancelled() && needs.context.result == 'success'
       && (needs.checks.result == 'success' || needs.checks.result == 'skipped')
       && ((github.event_name == 'push' && startsWith(github.ref_name, 'feature/'))
-          || github.event.action == 'ready_for_review') }}
+          || github.event.action == 'ready_for_review'
+          || needs.agent.outputs.commit != ''
+          || needs.context.outputs.step == 'final') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -147,8 +328,8 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     env:
-      BASE: ${{ needs.context.outputs.base }}
-      HEAD: ${{ needs.context.outputs.head }}
+      BASE: ${{ needs.agent.outputs.base || needs.context.outputs.base }}
+      HEAD: ${{ needs.agent.outputs.commit || needs.context.outputs.head }}
       BRANCH: ${{ needs.context.outputs.branch }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       FACTORY_PREVIEW_DOMAIN: ${{ vars.FACTORY_PREVIEW_DOMAIN }}
@@ -158,7 +339,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ needs.context.outputs.head }}
+          ref: ${{ env.HEAD }}
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: screenshots of the preview
         if: needs.context.outputs.ui == 'true' && vars.FACTORY_PREVIEW_DOMAIN != ''
@@ -180,7 +361,7 @@ jobs:
           set -e
           if [ -f "$RUNNER_TEMP/review.md" ]; then
             cat "$RUNNER_TEMP/review.md" >> "$GITHUB_STEP_SUMMARY"
-            pr="${{ github.event.pull_request.number }}"
+            pr="${{ github.event.pull_request.number || github.event.issue.number }}"
             [ -n "$pr" ] || pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json number -q '.[0].number')"
             [ -z "$pr" ] || gh pr comment "$pr" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/review.md"
           fi
@@ -191,15 +372,90 @@ jobs:
           name: factory-review-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/review.json
+            ${{ runner.temp }}/review.md
             ${{ runner.temp }}/screenshots
           if-no-files-found: ignore
 
+  next:
+    needs: [context, agent, checks, review]
+    if: ${{ always() && needs.context.result == 'success' && needs.context.outputs.step != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+      issues: write
+      pull-requests: write
+      packages: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: ${{ needs.context.outputs.branch }}
+      STEP: ${{ needs.context.outputs.step }}
+      PHASE: ${{ needs.context.outputs.phase }}
+      REASON: ${{ needs.context.outputs.reason }}
+      IMAGE: ${{ needs.context.outputs.image }}
+      CHECKS: ${{ needs.checks.result }}
+      REVIEW: ${{ needs.review.result }}
+      AGENT: ${{ needs.agent.result }}
+      CALLER: ${{ github.workflow_ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.agent.outputs.commit || needs.context.outputs.head }}
+      - uses: astral-sh/setup-uv@v6
+      - name: factory CLI from the runner image
+        run: |
+          docker pull -q "$IMAGE"
+          id="$(docker create "$IMAGE")"
+          docker cp "$id:/opt/factory" "$RUNNER_TEMP/factory-dist"
+          docker rm "$id" >/dev/null
+          uv tool install --python 3.12 "$RUNNER_TEMP"/factory-dist/*.whl
+      - name: reports of this run
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: factory-*
+          path: ${{ runner.temp }}/reports
+      - id: next
+        name: factory next
+        shell: bash
+        run: |
+          set -euo pipefail
+          r="$RUNNER_TEMP/reports"
+          args=(--step "$STEP" --branch "$BRANCH" --checks "$CHECKS" --review "$REVIEW"
+                --run-json "$r/factory-run/run.json" --ci-report "$r/factory-ci-report/ci-report.txt"
+                --feedback-out "$RUNNER_TEMP/next/feedback.txt")
+          for review_md in "$r"/factory-review-*/review.md; do
+            [ -f "$review_md" ] && args+=(--review-report "$review_md")
+          done
+          [ -n "$PHASE" ] && args+=(--phase "$PHASE")
+          [ -n "$REASON" ] && args+=(--reason "$REASON")
+          mkdir -p "$RUNNER_TEMP/next"
+          factory next "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: steps.next.outputs.action == 'dispatch'
+        with:
+          name: factory-feedback
+          path: ${{ runner.temp }}/next/feedback.txt
+          overwrite: true
+          if-no-files-found: ignore
+      - name: dispatch ${{ steps.next.outputs.mode }} ${{ steps.next.outputs.phase }}
+        if: steps.next.outputs.action == 'dispatch'
+        env:
+          MODE: ${{ steps.next.outputs.mode }}
+          NEXT_PHASE: ${{ steps.next.outputs.phase }}
+        run: |
+          workflow="${CALLER#*/*/}"   # owner/repo/.github/workflows/x.yml@ref -> .github/workflows/x.yml@ref
+          workflow="${workflow%@*}"
+          gh workflow run "$(basename "$workflow")" --repo "$GITHUB_REPOSITORY" --ref "$BRANCH" \
+            -f mode="$MODE" -f phase="$NEXT_PHASE" -f feedback-run="$GITHUB_RUN_ID"
+
   preview:
-    needs: context
+    needs: [context, agent]
     if: >-
-      ${{ vars.FACTORY_PREVIEW_RUNNER != '' && needs.context.outputs.preview == 'true'
+      ${{ !cancelled() && vars.FACTORY_PREVIEW_RUNNER != '' && needs.context.outputs.preview == 'true'
       && startsWith(needs.context.outputs.branch, 'feature/')
-      && (github.event_name == 'push' || github.event.action == 'closed') }}
+      && (github.event_name == 'push' || github.event.action == 'closed'
+          || needs.agent.outputs.commit != '') }}
     runs-on: ${{ vars.FACTORY_PREVIEW_RUNNER }}
     permissions:
       contents: read
@@ -219,7 +475,7 @@ jobs:
       - uses: actions/checkout@v4
         if: github.event.action != 'closed'
         with:
-          ref: ${{ needs.context.outputs.head }}
+          ref: ${{ needs.agent.outputs.commit || needs.context.outputs.head }}
       - name: deploy preview
         if: github.event.action != 'closed'
         run: factory preview up --product . --ref HEAD --branch "$BRANCH"
