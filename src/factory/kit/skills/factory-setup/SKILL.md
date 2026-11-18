@@ -23,8 +23,9 @@ Fill in the placeholders that `factory validate` reports after `factory init`.
    - Replace the `verify:` placeholder line with the real command
 
    **`.github/workflows/factory.yml`**
-   - Replace `OWNER/software-factory` (and strip the trailing `# FACTORY:` comment) with
-     `{factory_repo}/.github/workflows/product.yml@v1`
+   - On both `OWNER/software-factory` lines, replace it with the factory repo and strip the
+     trailing `# FACTORY:` comment: `uses: {factory_repo}/.github/workflows/product.yml@v1` and
+     `image-prefix: ghcr.io/{factory_repo, lowercase}/runner`
 
    **`.specify/memory/constitution.md`**
    - Replace the `<!-- FACTORY: ... -->` comment block with a `### Technology Stack` section
