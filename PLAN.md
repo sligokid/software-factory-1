@@ -184,7 +184,11 @@ The factory is stateless. Issue state comes from Linear, progress from the check
 
 **Verified with a real Claude agent** (2026-11-18): a two-phase stdlib test product, one commit per phase, `verify` green, egress only to the Anthropic API, no tool denials, about $0.08 per phase; `factory replay` keeps its result under `refs/factory/runs/`. It found that build leftovers (`__pycache__`) were committed, fixed with a system git excludes file in `runner-base`.
 
-**Untested:** the workflows on GitHub (no remote yet); the public ngrok preview and its traffic policy (needs a reserved domain and `NGROK_AUTHTOKEN`; only the local preview has run).
+**Verified on GitHub** (2026-11-18): `v1` published the runner images to ghcr.io (public). In the test product `sligokid/software-factory-product-1`, the clean feature branch passes every check, and one bad commit per check fails only that step: verify, commit size, agent protected path, secret scan, SAST, dependency scan. It found that `factory init` pointed products at the wrong image prefix when the factory repo is not named `software-factory` (fixed).
+
+The reviewer ran on the ready PR and posted its comment (pass, 2 advisory findings).
+
+**Untested:** the public ngrok preview and its traffic policy (needs a reserved domain and `NGROK_AUTHTOKEN`; only the local preview has run).
 
 ### Stage 4: Dispatcher and Linear integration
 - [ ] Triggers: Linear webhook (or 30-second polling) for Ready for agent, mapping each Linear team or project to a product repo; and the `factory:ready` PR label for document-mode features. GitHub events for reviews, comments, close and labels.
