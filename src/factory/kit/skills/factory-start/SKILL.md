@@ -29,7 +29,9 @@ The feature id must match `^[A-Za-z0-9][A-Za-z0-9._-]{1,40}$`.
 
 1. **Check the repository.** `.factory/factory.yaml` must exist (run `factory validate`); if not,
    tell the developer to run `factory init` first and stop. Run `git status --porcelain`; if
-   there are uncommitted changes, stop and ask the developer to commit or stash them.
+   there are uncommitted changes, stop and ask the developer to commit or stash them. In
+   document mode the source document itself does not count: an untracked document is expected,
+   it carries over to the new branch and step 5 moves it into the spec. Never commit it here.
 
 2. **Read the source.**
    - Linear mode: fetch the issue with the Linear MCP tools: title, description, state, URL.
@@ -63,8 +65,9 @@ The feature id must match `^[A-Za-z0-9][A-Za-z0-9._-]{1,40}$`.
    url: <Linear URL>     # linear only
    path: <document path> # document only
    ```
-   In document mode also copy the document into `specs/<dir>/` (keep its file name) so the spec
-   stays traceable even if the original moves. `/factory-handoff`, `/factory-replan` and the
+   In document mode also put the document in `specs/<dir>/` (keep its file name) so the spec
+   stays traceable even if the original moves: move it if it is an untracked file inside the
+   repository (so no stray copy is left outside `specs/`), otherwise copy it. `/factory-handoff`, `/factory-replan` and the
    factory read `source.yaml` to decide whether to talk to Linear.
 
 6. **Linear mode only:** move the issue to `In spec`, assign it to the developer if unassigned,
