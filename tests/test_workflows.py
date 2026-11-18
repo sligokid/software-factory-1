@@ -37,9 +37,10 @@ def test_init_installs_ci_workflow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr("factory.init.run_speckit_init", lambda _: None)
-    init_product(tmp_path / "a", factory_repo="acme/software-factory")
+    init_product(tmp_path / "a", factory_repo="Acme/factory-2")
     text = (tmp_path / "a" / CI_WORKFLOW).read_text()
-    assert "uses: acme/software-factory/.github/workflows/product.yml@v1\n" in text
+    assert "uses: Acme/factory-2/.github/workflows/product.yml@v1\n" in text
+    assert "image-prefix: ghcr.io/acme/factory-2/runner\n" in text  # where images.yml publishes
     init_product(tmp_path / "b")
     assert main(["validate", "--root", str(tmp_path / "b")]) == 0
     assert f"{CI_WORKFLOW}: set the factory repository" in capsys.readouterr().out

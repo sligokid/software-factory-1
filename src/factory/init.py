@@ -127,7 +127,8 @@ def _ci_workflow(factory_repo: str | None) -> str:
     lines = []
     for line in text.splitlines(keepends=True):
         if FACTORY_REPO_PLACEHOLDER in line:
-            line = line.replace(FACTORY_REPO_PLACEHOLDER, factory_repo).split(" #")[0] + "\n"
+            repo = factory_repo.lower() if "ghcr.io/" in line else factory_repo  # image names
+            line = line.replace(FACTORY_REPO_PLACEHOLDER, repo).split(" #")[0] + "\n"
         lines.append(line)
     return "".join(lines)
 
