@@ -113,6 +113,7 @@ def build_prompt(
     head: str,
     spec_dir: str | None,
     screenshots: list[Path],
+    addressing: str = "",
 ) -> str:
     commits = git.commits(root, base, head)
     listed = "\n".join(f"- {c.sha[:10]} {c.subject} ({c.author})" for c in commits) or "- (none)"
@@ -128,6 +129,12 @@ def build_prompt(
         shots = (
             "\nScreenshots of the running preview at this commit (open each with Read and check "
             f"the UI against the spec; broken or empty pages are blocking):\n{files}\n"
+        )
+    if addressing.strip():
+        shots += (
+            "\nThese commits were made to resolve the CI failures or review findings below. "
+            "Changes needed to resolve them are in scope even outside the phase's tasks; check "
+            f"that each one is resolved:\n```\n{addressing.strip()[-8000:]}\n```\n"
         )
     return PROMPT.format(
         base=base,
@@ -185,13 +192,14 @@ def review(
     screenshots: Path | None = None,
     max_turns: int = 40,
     model: str | None = None,
+    addressing: str = "",
 ) -> Review:
     if "ANTHROPIC_API_KEY" in os.environ:
         raise ReviewError(
             "ANTHROPIC_API_KEY is set: the factory only runs on a Claude subscription"
         )
     shots = screenshots_in(screenshots)
-    prompt = build_prompt(root, contract, base, head, spec_dir, shots)
+    prompt = build_prompt(root, contract, base, head, spec_dir, shots, addressing)
     extra = [screenshots.resolve()] if screenshots and shots else []
     cmd = claude_command(prompt, contract, max_turns=max_turns, model=model, extra_dirs=extra)
     proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)

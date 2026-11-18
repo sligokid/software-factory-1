@@ -193,9 +193,10 @@ def cmd_review(args: argparse.Namespace) -> int:
         feature = tasks.feature_id(_branch(args, root))
         spec = args.spec or (tasks.find_spec_dir(root, feature) if feature else None)
         shots = Path(args.screenshots) if args.screenshots else None
+        addressing = Path(args.addressing).read_text() if args.addressing else ""
         result = review.review(
             root, contract, args.base, args.head, spec_dir=spec, screenshots=shots,
-            max_turns=args.max_turns, model=args.model,
+            max_turns=args.max_turns, model=args.model, addressing=addressing,
         )  # fmt: skip
     except (ContractError, review.ReviewError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -329,6 +330,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_rev.add_argument("--branch", help="feature branch (default: from CI or git)")
     p_rev.add_argument("--spec", help="spec folder (default: from specs/*/source.yaml)")
     p_rev.add_argument("--screenshots", help="folder of preview screenshots to review")
+    p_rev.add_argument("--addressing", help="findings a fix or rework commit was made to resolve")
     p_rev.add_argument("--json", help="write the verdict as JSON")
     p_rev.add_argument("--markdown", help="write the review as Markdown (PR comment)")
     p_rev.add_argument("--max-turns", type=int, default=40)

@@ -46,7 +46,7 @@ on:
         required: false
 
 env:
-  FACTORY_VERSION: "0.4.0" # runner image tag: always the factory package version
+  FACTORY_VERSION: "0.4.1" # runner image tag: always the factory package version
 
 jobs:
   context:
@@ -318,6 +318,7 @@ jobs:
           || needs.context.outputs.step == 'final') }}
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       packages: read
       pull-requests: write
@@ -341,6 +342,15 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.HEAD }}
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: findings this commit addresses (fix, rework)
+        if: needs.agent.outputs.commit != '' && needs.context.outputs.feedback-run != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: factory-feedback
+          path: ${{ runner.temp }}/addressing
+          run-id: ${{ needs.context.outputs.feedback-run }}
+          github-token: ${{ github.token }}
       - name: screenshots of the preview
         if: needs.context.outputs.ui == 'true' && vars.FACTORY_PREVIEW_DOMAIN != ''
         continue-on-error: true
@@ -354,6 +364,7 @@ jobs:
           fi
           shots=()
           [ -d "$RUNNER_TEMP/screenshots" ] && shots=(--screenshots "$RUNNER_TEMP/screenshots")
+          [ -s "$RUNNER_TEMP/addressing/feedback.txt" ] && shots+=(--addressing "$RUNNER_TEMP/addressing/feedback.txt")
           set +e
           factory review --base "$BASE" --head "$HEAD" --branch "$BRANCH" "${shots[@]}" \
             --json "$RUNNER_TEMP/review.json" --markdown "$RUNNER_TEMP/review.md"

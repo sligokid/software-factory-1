@@ -42,6 +42,16 @@ def test_prompt_names_commits_spec_constitution_and_screenshots(
     assert "specs/001-demo/spec.md" in prompt
     assert str(shot) in prompt
     assert f"git diff {base}...HEAD" in prompt
+    assert "resolve the CI failures" not in prompt
+
+
+def test_prompt_puts_the_addressed_findings_in_scope(product: Path) -> None:
+    base = git(product, "rev-parse", "HEAD~1").strip()
+    prompt = review.build_prompt(
+        product, load(product), base, "HEAD", None, [], "blocking: .pyc files committed"
+    )
+    assert "in scope even outside the phase's tasks" in prompt
+    assert "blocking: .pyc files committed" in prompt
 
 
 def test_reviewer_is_read_only(product: Path, tmp_path: Path) -> None:
