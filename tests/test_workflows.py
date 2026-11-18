@@ -50,6 +50,8 @@ def test_dispatcher_jobs_chain_one_step_per_run() -> None:
     nxt = " ".join(str(s.get("run", "")) for s in jobs["next"]["steps"])
     assert "factory next" in nxt and "gh workflow run" in nxt
     assert "OWNER|MEMBER|COLLABORATOR" in jobs["context"]["steps"][1]["run"]
+    # a PR the factory's final step already reviewed is not reviewed again when marked ready
+    assert "'factory:awaiting-review'" in jobs["review"]["if"]
 
 
 def test_init_installs_ci_workflow(

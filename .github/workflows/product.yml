@@ -5,7 +5,8 @@
 # CI (stage 3)
 #   push (main, feature/**)          checks: setup, verify, checks, factory checks, secrets, SAST, deps
 #   push (feature/**)                reviewer on the pushed commits; preview redeploy
-#   pull_request ready_for_review    reviewer on the whole PR
+#   pull_request ready_for_review    reviewer on the whole PR (skipped when the factory's final
+#                                    review already passed it: label factory:awaiting-review)
 #   pull_request closed              preview removed
 #
 # Dispatcher (stage 4): each run does one step, then `factory next` dispatches the next one
@@ -313,7 +314,8 @@ jobs:
       ${{ !cancelled() && needs.context.result == 'success'
       && (needs.checks.result == 'success' || needs.checks.result == 'skipped')
       && ((github.event_name == 'push' && startsWith(github.ref_name, 'feature/'))
-          || github.event.action == 'ready_for_review'
+          || (github.event.action == 'ready_for_review'
+              && !contains(github.event.pull_request.labels.*.name, 'factory:awaiting-review'))
           || needs.agent.outputs.commit != ''
           || needs.context.outputs.step == 'final') }}
     runs-on: ubuntu-latest

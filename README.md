@@ -132,7 +132,7 @@ which calls this repo's reusable workflow (`.github/workflows/product.yml@v1`):
 |-------|------|
 | push to `main` or `feature/**` | `checks` in the product's runner image: every `factory ci` step on the pushed commits |
 | push to `feature/**` | `review` of the pushed commits, posted on the PR; `preview` redeploy |
-| PR ready for review | `review` of the whole PR (with screenshots when `preview.ui`) |
+| PR ready for review | `review` of the whole PR (with screenshots when `preview.ui`); skipped when the PR has `factory:awaiting-review`, because the factory's final step already reviewed it |
 | PR closed or merged | `preview` removed |
 
 ### The agent loop (dispatcher)
