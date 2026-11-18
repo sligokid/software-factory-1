@@ -159,7 +159,7 @@ def test_next_command_dry_run(
     run = product / "run.json"
     run.write_text(json.dumps({"result": {"status": "ok", "phase": 1, "commit": "c0ffee"}}))
     args = ["next", "--step", "implement", "--root", str(product), "--run-json", str(run),
-            "--checks", "success", "--review", "skipped", "--dry-run",
+            "--checks", "success", "--review", "skipped", "--dry-run", "--branch", "feature/DEMO-1",
             "--feedback-out", str(product / "fb.txt")]  # fmt: skip
     assert main(args) == 0
     printed = json.loads(capsys.readouterr().out)
