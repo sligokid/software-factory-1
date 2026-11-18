@@ -78,6 +78,7 @@ def test_no_route_around_the_proxy(network: str) -> None:
 STAND_IN_CLAUDE = r"""#!/bin/sh
 set -e
 echo hello > app.txt
+mkdir -p __pycache__ && touch __pycache__/app.cpython-312.pyc
 sed -i 's/- \[ \] T001/- [X] T001/; s/- \[ \] T002/- [X] T002/' specs/001-demo/tasks.md
 git add -A && git commit -qm wip
 echo '{"type": "result", "num_turns": 3, "total_cost_usd": 0}'
@@ -117,5 +118,11 @@ def test_agent_run_lands_one_commit_on_the_branch(
     ).stdout.splitlines()
     assert log == ["DEMO-1: Phase 1: Setup"]
     assert (product / "app.txt").read_text() == "hello\n"  # checked-out branch was moved
+    tree = subprocess.run(
+        ["git", "-C", str(product), "ls-tree", "-r", "--name-only", "feature/DEMO-1"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "__pycache__" not in tree  # build leftovers are not committed
     for name in ("run.json", "transcript.jsonl", "runner.log", "egress.log"):
         assert (run_dir / name).is_file()

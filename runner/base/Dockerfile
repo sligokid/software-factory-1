@@ -45,6 +45,12 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}" \
  && install -m 0755 "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude \
  && rm -rf /root/.local /root/.claude /root/.claude.json /root/.cache
 
+# Build and test leftovers stay out of agent commits even when a product has no .gitignore
+# (untracked files only; the product's own .gitignore and tracked files are unaffected).
+RUN printf '%s\n' __pycache__/ '*.py[cod]' .pytest_cache/ .mypy_cache/ .ruff_cache/ .venv/ \
+      node_modules/ > /etc/gitignore \
+ && git config --system core.excludesFile /etc/gitignore
+
 # Non-root agent. /workspace and /home/agent become per-run anonymous volumes.
 RUN useradd --uid 10001 --user-group --create-home --home-dir /home/agent --shell /bin/bash agent \
  && mkdir /workspace && chown agent:agent /workspace

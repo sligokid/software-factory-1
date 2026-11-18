@@ -4,6 +4,12 @@ Product-agnostic delivery pipeline. A developer writes a spec and task list with
 GitHub Spec Kit inside a product repo, hands it over, and the factory implements each phase in a
 sandboxed headless Claude Code run, delivering one PR per feature with a live preview.
 
+Everything that executes product code runs in **Docker**: each agent run is a locked-down
+container behind an egress-proxy container on a private Docker network, CI jobs run inside the
+same runner images, and previews are the product's own Docker Compose stack. Docker (Engine or
+Desktop, with Compose v2) is required on any machine that runs `factory agent`, `factory replay`
+or `factory preview`. See [How the factory uses Docker](#how-the-factory-uses-docker).
+
 The factory works with any product (frontend or backend, any language) that has a
 `.factory/factory.yaml` contract. See `PLAN.md` for the full design.
 
@@ -34,19 +40,79 @@ Fill in the product principles with `/speckit-constitution`. To run agents local
 | `factory preview up\|down\|status\|url` | Per-feature preview from the product's compose file, on the factory host. |
 | `factory replay <run folder>` | Re-runs a recorded run from the same commit, mode, phase, feedback and image; the result is kept under `refs/factory/runs/` and the branch is not moved. |
 
-## Runner and sandbox
+## How the factory uses Docker
 
-`make images` builds `software-factory/runner-{base,python,node}:<version>` (`runner/`). Each run:
+The `factory` CLI itself is plain Python on the host. It never runs product code or Claude Code
+directly; it drives the `docker` CLI. Docker is used in four places.
 
-- gets an internal Docker network whose only way out is an egress proxy allowing HTTPS to the
-  Anthropic API, GitHub and the product's `egress` hosts (`.example.com` allows subdomains);
-- runs as uid 10001 with no capabilities, `no-new-privileges`, a read-only root, CPU, memory and
-  process limits, no Docker socket and no host mounts (the branch goes in as a git bundle on
-  stdin and the result comes back as a bundle on stdout);
-- refuses `ANTHROPIC_API_KEY` and requires `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`);
-- runs the contract's `setup`, then headless Claude Code limited to git, Spec Kit scripts and the
-  contract's commands, then `verify`, `checks` and the factory checks, and squashes the work into
-  one commit.
+### 1. Runner images (`runner/`, `make images`)
+
+| Image | Built from | Adds |
+|-------|------------|------|
+| `runner-base` | `debian:bookworm-slim` | git, gh, uv, Spec Kit, Claude Code (pinned native build), the factory CLI (`factory-runner` entrypoint, `factory-egress` proxy, `factory ci`), gitleaks, semgrep, osv-scanner, and a non-root `agent` user (uid 10001) |
+| `runner-python` | `runner-base` | CPython 3.11-3.13 via uv, downloads disabled at run time |
+| `runner-node` | `runner-base` | Node.js LTS, pnpm and yarn via corepack |
+| `runner-reviewer` | `runner-base` | Playwright and Chromium for `factory screenshots` |
+
+All tool versions come from `src/factory/__init__.py`. Locally `make images` tags them
+`software-factory/runner-*:<version>`; the `images` workflow publishes them to
+`ghcr.io/<owner>/<repo>/runner-*`. A product picks its image with `runner:` in `factory.yaml`.
+
+### 2. The agent sandbox (`factory agent`, `factory replay`)
+
+`src/factory/runner/sandbox.py` builds the docker command lines and `host.py` runs them. Each run
+creates three Docker objects named `factory-<run id>`, all removed when the run ends:
+
+1. **An internal network** (`docker network create --internal`): containers on it have no route
+   to the internet or the host.
+2. **An egress proxy container** (`factory-egress`, same image, 0.5 CPU / 256 MB): started on the
+   default bridge so it can reach out, then also attached to the internal network under the alias
+   `egress`. It only accepts HTTPS `CONNECT` to port 443 of allowlisted hosts (the Anthropic API,
+   GitHub and the product's `egress` list) and logs every allow and deny to `egress.log`.
+3. **The agent container** (`docker run -i --rm`), on the internal network only, with
+   `HTTPS_PROXY=http://egress:3128`, and hardened with:
+   - `--user 10001:10001`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--init`;
+   - `--read-only` root filesystem; writable space is only a 1 GB `/tmp` tmpfs and two anonymous
+     volumes (`/workspace`, `/home/agent`) that are deleted with the container;
+   - `--cpus 2 --memory 4g --memory-swap 4g --pids-limit 512` by default, plus a wall-clock
+     timeout (`docker kill` after one hour by default);
+   - no Docker socket and no bind mounts, so it cannot see the host filesystem or start containers;
+   - `CLAUDE_CODE_OAUTH_TOKEN` passed by name (`-e NAME`), never on the command line;
+     `ANTHROPIC_API_KEY` is refused.
+
+Code moves in and out through pipes, not mounts: the host writes the branch as a `git bundle` to
+the container's stdin, and the container prints the result commit as a bundle in its final
+`factory_result` line on stdout. The host fetches that into `refs/factory/runs/<run id>` and,
+if the branch is unchanged, fast-forwards it. Inside the container the entrypoint runs the
+contract's `setup`, headless Claude Code limited to git, Spec Kit scripts and the contract's
+commands, then `verify`, `checks` and the factory checks, and squashes the work into one commit.
+
+Everything is recorded under `~/.factory/runs/<run id>/` (`run.json` with the exact image,
+`input.bundle`, `transcript.jsonl`, `runner.log`, `egress.log`, `result.bundle`), which is what
+`factory replay` uses to re-run with the same image and inputs.
+
+### 3. CI (`.github/workflows/product.yml`)
+
+The `checks` job runs inside the product's runner image as a GitHub Actions `container:`, so CI
+uses the same toolchain and scanners as the agent. The `review` job runs in `runner-reviewer`.
+
+### 4. Previews (`factory preview`)
+
+On the factory host (never inside the sandbox), `factory preview up` exports the commit and runs
+the product's own compose file with `docker compose -p factory-preview-<id>`, adds an ngrok
+tunnel service at `https://<id>.<domain>`, and health-checks the service with a throwaway
+`docker run ... curl` on the stack's network. `down` runs `docker compose down -v --remove-orphans`.
+
+### Requirements
+
+- Docker Engine or Docker Desktop with Compose v2, and a user that can run `docker`.
+- `make images` (or access to the published ghcr.io images) before the first `factory agent`.
+- `make docker-test` runs the Docker-backed tests (sandbox, scanners, preview); plain `make test`
+  skips them unless `FACTORY_DOCKER_TESTS=1`.
+
+## Running an agent locally
+
+Needs Docker and the runner images (see above).
 
 ```bash
 export CLAUDE_CODE_OAUTH_TOKEN=...      # never ANTHROPIC_API_KEY

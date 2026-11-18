@@ -182,7 +182,9 @@ The factory is stateless. Issue state comes from Linear, progress from the check
 
 **Done when:** each check fails on a bad commit and passes on a clean one in a test product, and its preview shows the latest commit.
 
-**Untested:** a real Claude agent run (stage 2 was verified with a stand-in `claude`); the workflows on GitHub (no remote yet); the public ngrok preview and its traffic policy (needs a reserved domain and `NGROK_AUTHTOKEN`; only the local preview has run).
+**Verified with a real Claude agent** (2026-11-18): a two-phase stdlib test product, one commit per phase, `verify` green, egress only to the Anthropic API, no tool denials, about $0.08 per phase; `factory replay` keeps its result under `refs/factory/runs/`. It found that build leftovers (`__pycache__`) were committed, fixed with a system git excludes file in `runner-base`.
+
+**Untested:** the workflows on GitHub (no remote yet); the public ngrok preview and its traffic policy (needs a reserved domain and `NGROK_AUTHTOKEN`; only the local preview has run).
 
 ### Stage 4: Dispatcher and Linear integration
 - [ ] Triggers: Linear webhook (or 30-second polling) for Ready for agent, mapping each Linear team or project to a product repo; and the `factory:ready` PR label for document-mode features. GitHub events for reviews, comments, close and labels.
