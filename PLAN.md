@@ -216,18 +216,24 @@ developer: merge | request changes (-> rework) | close (-> factory:needs-replan)
 
 Why this works without a server or a GitHub App: pushes made with `GITHUB_TOKEN` do not start workflows, but `workflow_dispatch` is the documented exception, so the run itself runs checks and review as later jobs and then dispatches the next step. State lives only in GitHub: done phases in `tasks.md`, counters in a marker in the PR body, history in PR comments.
 
-- [ ] `factory next`: reads `tasks.md`, the PR, its labels and the marker, and the run's job results; prints the next step (mode, phase, feedback) or a final state. Pure decision logic, unit-tested on recorded states.
-- [ ] Limits, from `factory.yaml` with defaults: 2 fixes per phase, 2 converge rounds, 2 rework rounds, the existing turn limit and wall-clock timeout.
-- [ ] `product.yml`: `agent` and `next` jobs; `agent` installs the factory CLI at the workflow's ref, runs `factory agent` and pushes; `checks` and `review` run after it in the same run; the failure report from `checks` goes to `next` as an artifact.
-- [ ] Kit `factory.yml`: triggers `workflow_dispatch` (inputs: branch, mode, phase), `pull_request` labeled, `pull_request_review` and `issue_comment` (`@agent`); permissions `contents: write`, `actions: write`, `pull-requests: write`.
-- [ ] Status: PR labels (`factory:working`, `factory:awaiting-review`, `factory:failed`, `factory:needs-replan`), a comment per run (phase, commit, turns, cost, time, transcript artifact link), the phase table in the PR body. `human-takeover` label pauses the loop.
-- [ ] Run folders (`run.json`, transcript, runner and egress logs) uploaded as Actions artifacts; `factory replay` accepts a downloaded artifact.
+- [x] `factory next`: reads `tasks.md`, the PR, its labels and the marker, and the run's job results; prints the next step (mode, phase, feedback) or a final state. Pure decision logic, unit-tested on recorded states.
+- [x] Limits, from `factory.yaml` with defaults: 2 fixes per phase, 2 converge rounds, 2 rework rounds, the existing turn limit and wall-clock timeout.
+- [x] `product.yml`: `agent` and `next` jobs; `agent` installs the factory CLI from the wheel in the runner image, runs `factory agent` and pushes; `checks` and `review` run after it in the same run; the failure report from `checks` goes to `next` as an artifact.
+- [x] Kit `factory.yml`: triggers `workflow_dispatch` (inputs: branch, mode, phase), `pull_request` labeled, `pull_request_review` and `issue_comment` (`@agent`); permissions `contents: write`, `actions: write`, `pull-requests: write`.
+- [x] Status: PR labels (`factory:working`, `factory:awaiting-review`, `factory:failed`, `factory:needs-replan`), a comment per run (phase, commit, turns, cost, time, transcript artifact link), the phase table in the PR body. `human-takeover` label pauses the loop.
+- [x] Run folders (`run.json`, transcript, runner and egress logs) uploaded as Actions artifacts; `factory replay` accepts a downloaded artifact.
 - [ ] Linear mode: a relay from the Linear webhook to `repository_dispatch` (or a scheduled workflow polling Linear), and Linear states and comments when `source.yaml` says `linear`.
 - [ ] OTel metrics, or a metrics summary per feature in the final PR comment until a collector exists.
 
 Not on GitHub-hosted runners: a live preview link, because a preview outlives a job. It keeps the self-hosted preview runner (P5) from stage 3. The reviewer's screenshots can instead come from a short-lived stack started inside the review job.
 
 Cost: free on public product repos; private repos use Actions minutes for every agent run. Each run must fit in one job (6 hours; the factory's timeout is 1 hour). Agents run on amd64 images, as CI does.
+
+**Verified on GitHub** (2026-11-18, `sligokid/software-factory-product-1`):
+- PR #3 (GREET-3, two phases): label -> implement 1 -> implement 2 -> converge (converged) -> final whole-PR review -> `factory:awaiting-review`, every step chained by `workflow_dispatch`, no manual step; about $0.60 of agent runs. Converting the draft failed (`Resource not accessible by integration`); fixed in 0.4.2 (`contents: write` on `next`, and a comment instead of a crash).
+- PR #2 (GREET-2): review failures dispatched two fix runs, then the limit set `factory:failed`. It exposed a reviewer deadlock (a fix removed files a review asked it to remove, the next review called that out of scope), fixed in 0.4.1 with `factory review --addressing`. Closing the PR set `factory:needs-replan`.
+
+**Not verified yet:** a fix run that turns a failed phase green, a forced timeout, rework from a requested change or an `@agent` comment, `human-takeover`, the draft conversion in 0.4.2, `factory replay` from a downloaded `factory-run` artifact. Not built: Linear mode, metrics.
 
 **Done when:** in the test product, a two-phase document-mode feature handed over with `/factory-handoff` ends as one ready PR with no manual step; a forced CI failure is fixed by a fix run; a forced timeout ends in `factory:failed`; a requested change produces a rework commit; closing the PR sets `factory:needs-replan`. Linear mode: the same feature from a Linear issue ends with the correct Linear states and comments.
 

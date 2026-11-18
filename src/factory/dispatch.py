@@ -275,7 +275,11 @@ def record(
     gh.update(pr["number"], update_body(pr.get("body", ""), d.state, phases), add, remove)
     gh.comment(pr["number"], comment(o, d, url))
     if d.action is Action.READY and pr.get("isDraft"):
-        gh.ready(pr["number"])
+        try:
+            gh.ready(pr["number"])
+        except RuntimeError as exc:  # e.g. the token may not convert drafts in this repo
+            gh.comment(pr["number"], f"Could not mark this PR ready automatically ({exc}). "
+                       "Mark it **ready for review** to start the human review.")  # fmt: skip
 
 
 def outcome_from_files(

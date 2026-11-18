@@ -166,3 +166,18 @@ def test_next_command_dry_run(
     # DEMO-1 phase 1 is still open in the fixture: the dispatcher asks for it again as "next".
     assert printed["action"] == "dispatch" and printed["mode"] == "implement"
     assert "action=dispatch\n" in out.read_text()
+
+
+def test_ready_failure_is_reported_not_fatal() -> None:
+    pr = {"number": 7, "body": "", "isDraft": True, "labels": []}
+
+    def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        code = 1 if cmd[1:3] == ["pr", "ready"] else 0
+        return subprocess.CompletedProcess(cmd, code, "", "Resource not accessible")
+
+    calls: list[list[str]] = []
+    gh = dispatch.GitHub("o/r", lambda cmd, **kw: (calls.append(cmd), run(cmd))[1])
+    d = Decision(Action.READY, State(), reason="whole-PR review passed")
+    dispatch.record(gh, pr, Outcome(Step.FINAL, review="success"), d, phases(ALL_DONE), "URL")
+    notes = [c[c.index("--body") + 1] for c in calls if c[1:3] == ["pr", "comment"]]
+    assert any("Mark it **ready for review**" in n for n in notes)
